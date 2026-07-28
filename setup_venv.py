@@ -48,7 +48,9 @@ def running_inside_venv(venv_dir: Path) -> bool:
     return sys.prefix != sys.base_prefix and same_path(Path(sys.prefix), venv_dir)
 
 
-def should_create_virtualenv(venv_dir: Path, python_path: Path, recreate: bool) -> bool:
+def should_create_virtualenv(
+    _venv_dir: Path, python_path: Path, recreate: bool
+) -> bool:
     if recreate:
         return True
     return not python_path.exists()
