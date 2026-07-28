@@ -49,15 +49,22 @@ Export memories to Markdown:
 python scrape_twinmind_memories.py --output memories
 ```
 
+The default `memories/` export directory is ignored by git because exported
+Markdown can contain private TwinMind memory content. Treat exported memories as
+local personal data, not source files.
+
 Each export also maintains `twinmind_memories.db`, a SQLite ledger containing
 the link and title of every attempted memory plus whether its Markdown download
-succeeded. Successful links are skipped on later runs, while failed or
-interrupted downloads remain eligible for retry. Use `--database PATH` to put
-the ledger elsewhere:
+succeeded. The default ledger is also ignored by git. Successful links are
+skipped on later runs, while failed or interrupted downloads remain eligible for
+retry. Use `--database PATH` to put the ledger elsewhere:
 
 ```powershell
-python scrape_twinmind_memories.py --output memories --database data/memories.db
+python scrape_twinmind_memories.py --output memories --database ..\twinmind-private\memories.db
 ```
+
+If you use a custom `--output` directory or `--database` path, keep it outside
+tracked source paths or add it to `.gitignore` before exporting private data.
 
 You can also run without activating the virtual environment by calling its Python
 directly.
@@ -77,6 +84,11 @@ macOS or Linux:
 .venv/bin/python scrape_twinmind_memories.py --limit 1 --debug
 .venv/bin/python scrape_twinmind_memories.py --output memories
 ```
+
+For a privacy-safe export workflow, save the dedicated TwinMind login profile
+once with `--login`, run a one-memory smoke test with `--limit 1 --debug`, then
+export to the ignored `memories/` directory. Avoid committing auth state,
+exports, or local ledgers.
 
 The dedicated Chrome profile lives under `.auth/`, which is ignored by git
 because it can contain sensitive session cookies. Do not keep that profile open

@@ -220,6 +220,9 @@ __marimo__/
 # TwinMind scraper authentication state
 .auth/
 
+# TwinMind Markdown exports can contain private memory content
+memories/
+
 # TwinMind scraper's local download ledger
 twinmind_memories.db
 twinmind_memories.db-journal
