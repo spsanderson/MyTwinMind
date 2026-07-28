@@ -9,6 +9,10 @@ Create a local virtual environment and install everything the scraper needs:
 python setup_venv.py
 ```
 
+You can rerun that command later to repair or update dependencies. It reuses the
+existing `.venv`; use `python setup_venv.py --recreate` only after deactivating
+the environment if you intentionally want to rebuild it from scratch.
+
 Activate it in Windows PowerShell:
 
 ```powershell
