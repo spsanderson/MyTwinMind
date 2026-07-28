@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -19,7 +22,9 @@ from typing import Dict, List, Optional, Sequence, Set
 LOGIN_URL = "https://app.twinmind.com/login"
 APP_ORIGIN = "https://app.twinmind.com"
 DEFAULT_AUTH_STATE = Path(".auth") / "twinmind_state.json"
+DEFAULT_PROFILE_DIR = Path(".auth") / "twinmind_chrome_profile"
 DEFAULT_OUTPUT_DIR = Path("memories")
+DEFAULT_BROWSER_CHANNEL = "chrome"
 
 LOGIN_BUTTON_SELECTOR = r".bg-\[\#0b4f75\]"
 GOOGLE_BUTTON_SELECTOR = "button.inline-flex:nth-child(1)"
@@ -143,6 +148,73 @@ def import_playwright():
     return Error, TimeoutError, sync_playwright
 
 
+def windows_chrome_candidates() -> List[Path]:
+    candidates = []
+    for env_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        if env_name == "LOCALAPPDATA":
+            env_value = str(Path.home() / "AppData" / "Local")
+        else:
+            env_value = os.environ.get(env_name)
+        if not env_value:
+            continue
+        base = Path(env_value)
+        candidates.append(base / "Google" / "Chrome" / "Application" / "chrome.exe")
+    return candidates
+
+
+def find_chrome_executable(platform: Optional[str] = None) -> Optional[str]:
+    current_platform = platform or sys.platform
+    if current_platform.startswith("win"):
+        for candidate in windows_chrome_candidates():
+            if candidate.exists():
+                return str(candidate)
+        return shutil.which("chrome") or shutil.which("chrome.exe")
+    if current_platform == "darwin":
+        app_path = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if app_path.exists():
+            return str(app_path)
+        return shutil.which("google-chrome") or shutil.which("chrome")
+    return (
+        shutil.which("google-chrome")
+        or shutil.which("google-chrome-stable")
+        or shutil.which("chromium-browser")
+        or shutil.which("chromium")
+    )
+
+
+def build_manual_login_command(chrome_executable: str, profile_dir: Path) -> List[str]:
+    return [chrome_executable, f"--user-data-dir={profile_dir}", LOGIN_URL]
+
+
+def quote_command(command: Sequence[str]) -> str:
+    return " ".join(f'"{part}"' if " " in part else part for part in command)
+
+
+def save_login_state(profile_dir: Path, debug: bool = False) -> None:
+    chrome_executable = find_chrome_executable()
+    if not chrome_executable:
+        raise SystemExit(
+            "Could not find Google Chrome. Install Chrome, then rerun "
+            "`python scrape_twinmind_memories.py --login`, or open Chrome manually with "
+            f"`--user-data-dir={profile_dir}` and visit {LOGIN_URL}."
+        )
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    command = build_manual_login_command(chrome_executable, profile_dir.resolve())
+    debug_log(debug, f"Launching manual Chrome login: {quote_command(command)}")
+    print("Opening a normal Chrome window with a dedicated TwinMind profile.", flush=True)
+    print("Complete the Google/TwinMind login there, then close that Chrome window.", flush=True)
+    print("After Chrome is fully closed, return here and press Enter.", flush=True)
+    subprocess.Popen(command)
+    input()
+    print(f"Manual Chrome profile is ready at {profile_dir}", flush=True)
+    print(
+        "If scraping reports the profile is locked, close every Chrome window using "
+        "that profile and rerun the scrape command.",
+        flush=True,
+    )
+
+
 def click_first_visible(locator, timeout_ms: int = 5000) -> bool:
     deadline = time.monotonic() + timeout_ms / 1000
     last_error: Optional[Exception] = None
@@ -177,30 +249,6 @@ def ensure_app_session(page, timeout_cls) -> None:
             "Could not find TwinMind navigation after loading the app. "
             "If your session expired, rerun with `--login`."
         ) from exc
-
-
-def save_login_state(auth_state: Path, debug: bool = False) -> None:
-    _, _, sync_playwright = import_playwright()
-    auth_state.parent.mkdir(parents=True, exist_ok=True)
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=False)
-        context = browser.new_context()
-        context.grant_permissions(["clipboard-read", "clipboard-write"], origin=APP_ORIGIN)
-        page = context.new_page()
-        page.goto(LOGIN_URL, wait_until="domcontentloaded")
-        debug_log(debug, "Opened TwinMind login page.")
-        click_if_present(page, LOGIN_BUTTON_SELECTOR, debug, "login button")
-        click_if_present(page, GOOGLE_BUTTON_SELECTOR, debug, "Google login button")
-        print(
-            "Complete Google login in the browser window, then return here and press Enter.",
-            flush=True,
-        )
-        input()
-        page.goto(APP_ORIGIN, wait_until="domcontentloaded")
-        page.wait_for_timeout(1500)
-        context.storage_state(path=str(auth_state))
-        browser.close()
-    print(f"Saved TwinMind browser session to {auth_state}")
 
 
 def click_if_present(page, selector: str, debug: bool, label: str) -> bool:
@@ -412,26 +460,30 @@ def scroll_memory_list(page, debug: bool = False) -> bool:
 
 
 def scrape_memories(
-    auth_state: Path,
+    profile_dir: Path,
     output_dir: Path,
     limit: Optional[int],
     headless: bool,
     overwrite: bool,
     debug: bool,
+    browser_channel: str,
 ) -> List[Path]:
-    if not auth_state.exists():
+    if not profile_dir.exists():
         raise SystemExit(
-            f"Missing auth state at {auth_state}. Run "
+            f"Missing Chrome profile at {profile_dir}. Run "
             "`python scrape_twinmind_memories.py --login` first."
         )
     _, TimeoutError, sync_playwright = import_playwright()
     written: List[Path] = []
     seen: Set[str] = set()
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=headless)
-        context = browser.new_context(storage_state=str(auth_state))
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            channel=browser_channel,
+            headless=headless,
+        )
         context.grant_permissions(["clipboard-read", "clipboard-write"], origin=APP_ORIGIN)
-        page = context.new_page()
+        page = context.pages[0] if context.pages else context.new_page()
         open_memories(page, TimeoutError, debug)
         stagnant_rounds = 0
         while limit is None or len(written) < limit:
@@ -446,7 +498,7 @@ def scrape_memories(
                 stagnant_rounds = 0
             if not moved and stagnant_rounds >= 2:
                 break
-        browser.close()
+        context.close()
     return written
 
 
@@ -457,7 +509,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--auth-state",
         type=Path,
         default=DEFAULT_AUTH_STATE,
-        help=f"Path to saved Playwright auth state. Default: {DEFAULT_AUTH_STATE}",
+        help="Deprecated. Use --profile-dir instead.",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        type=Path,
+        default=DEFAULT_PROFILE_DIR,
+        help=f"Dedicated Chrome profile directory. Default: {DEFAULT_PROFILE_DIR}",
+    )
+    parser.add_argument(
+        "--browser-channel",
+        default=DEFAULT_BROWSER_CHANNEL,
+        help=f"Playwright browser channel for scraping. Default: {DEFAULT_BROWSER_CHANNEL}",
     )
     parser.add_argument(
         "--output",
@@ -481,15 +544,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.limit is not None and args.limit < 1:
         raise SystemExit("--limit must be a positive integer.")
     if args.login:
-        save_login_state(args.auth_state, debug=args.debug)
+        save_login_state(args.profile_dir, debug=args.debug)
         return 0
     written = scrape_memories(
-        auth_state=args.auth_state,
+        profile_dir=args.profile_dir,
         output_dir=args.output,
         limit=args.limit,
         headless=args.headless,
         overwrite=args.overwrite,
         debug=args.debug,
+        browser_channel=args.browser_channel,
     )
     print(f"Exported {len(written)} TwinMind memories to {args.output}")
     return 0

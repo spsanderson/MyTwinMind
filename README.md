@@ -25,11 +25,17 @@ Activate it on macOS or Linux:
 source .venv/bin/activate
 ```
 
-Save a TwinMind browser session once:
+Save a TwinMind browser session once. This opens a normal Chrome window with a
+dedicated local profile under `.auth/` because Google often blocks OAuth inside
+automated browser login flows.
 
 ```powershell
 python scrape_twinmind_memories.py --login
 ```
+
+Complete the Google/TwinMind login in that Chrome window, close Chrome fully, and
+then return to the terminal and press Enter. The scraper will reuse that profile
+for future exports.
 
 Test one memory export with extra logging:
 
@@ -62,5 +68,6 @@ macOS or Linux:
 .venv/bin/python scrape_twinmind_memories.py --output memories
 ```
 
-The saved login state lives under `.auth/`, which is ignored by git because it can
-contain sensitive session cookies.
+The dedicated Chrome profile lives under `.auth/`, which is ignored by git
+because it can contain sensitive session cookies. Do not keep that profile open
+in Chrome while scraping; Chrome locks active profiles.
