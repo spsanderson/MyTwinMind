@@ -26,7 +26,8 @@ def venv_python_path(venv_dir: Path, platform: Optional[str] = None) -> Path:
 
 def activation_command(venv_dir: Path, platform: Optional[str] = None) -> str:
     if is_windows_platform(platform):
-        return rf".\{venv_dir}\Scripts\Activate.ps1"
+        script = venv_dir / "Scripts" / "Activate.ps1"
+        return str(script) if venv_dir.is_absolute() else rf".\{script}"
     return f"source {venv_dir}/bin/activate"
 
 
