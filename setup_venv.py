@@ -102,7 +102,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not venv_dir.is_absolute():
         venv_dir = project_dir / venv_dir
     setup_environment(project_dir=project_dir, venv_dir=venv_dir)
-    display_venv_dir = args.venv if not args.venv.is_absolute() else venv_dir
+
+    if args.venv.is_absolute() or Path.cwd() != project_dir:
+        display_venv_dir = venv_dir
+    else:
+        display_venv_dir = args.venv
     print_next_steps(display_venv_dir)
     return 0
 
