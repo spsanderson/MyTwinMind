@@ -6,11 +6,8 @@ from unittest.mock import Mock
 from scrape_twinmind_memories import (
     MemoryRecord,
     build_manual_login_command,
-<<<<<<< ours
     open_memory_database,
-=======
     click_memory_target,
->>>>>>> theirs
     quote_command,
     record_download,
     render_markdown,
@@ -94,7 +91,6 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         command = quote_command(["C:\\Program Files\\Chrome\\chrome.exe", "--flag=value"])
         self.assertEqual(command, '"C:\\Program Files\\Chrome\\chrome.exe" --flag=value')
 
-<<<<<<< ours
     def test_database_records_download_status_and_title(self):
         with tempfile.TemporaryDirectory() as tmp:
             database_path = Path(tmp) / "state" / "memories.db"
@@ -119,7 +115,7 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
                 record_download(database, link, "Done", True)
                 record_download(database, link, "Done", False)
                 self.assertTrue(was_successfully_downloaded(database, link))
-=======
+
     def test_click_memory_target_uses_normal_playwright_click(self):
         target = Mock()
 
@@ -135,7 +131,6 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         click_memory_target(target)
 
         target.evaluate.assert_called_once_with("element => element.click()")
->>>>>>> theirs
 
 
 if __name__ == "__main__":

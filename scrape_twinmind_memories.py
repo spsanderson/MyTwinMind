@@ -15,9 +15,10 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, Iterator, List, Optional, Sequence, Set
 
 
 LOGIN_URL = "https://app.twinmind.com/login"
@@ -130,7 +131,8 @@ def write_memory_markdown(
     return path
 
 
-def open_memory_database(database_path: Path) -> sqlite3.Connection:
+@contextmanager
+def open_memory_database(database_path: Path) -> Iterator[sqlite3.Connection]:
     """Open the download ledger and create its schema when necessary."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(database_path)
@@ -145,7 +147,10 @@ def open_memory_database(database_path: Path) -> sqlite3.Connection:
         """
     )
     connection.commit()
-    return connection
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def was_successfully_downloaded(connection: sqlite3.Connection, link: str) -> bool:
@@ -480,7 +485,7 @@ def scrape_visible_items(
             click_memory_item(item)
             page.wait_for_timeout(1000)
             link = page.url
-            if was_successfully_downloaded(database, link):
+            if not overwrite and was_successfully_downloaded(database, link):
                 debug_log(debug, f"Already downloaded; skipping {link}")
                 continue
             # Record the attempt before extraction so interrupted and failed runs
