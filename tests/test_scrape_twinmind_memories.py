@@ -4,6 +4,8 @@ from pathlib import Path
 
 from scrape_twinmind_memories import (
     MemoryRecord,
+    build_manual_login_command,
+    quote_command,
     render_markdown,
     sanitize_filename,
     unique_markdown_path,
@@ -71,6 +73,18 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
             self.assertIn("A concise summary.", content)
             self.assertIn("Speaker transcript.", content)
             self.assertIn("Action items.", content)
+
+    def test_build_manual_login_command_uses_profile_and_login_url(self):
+        command = build_manual_login_command(
+            "chrome.exe", Path(".auth") / "twinmind_chrome_profile"
+        )
+        self.assertEqual(command[0], "chrome.exe")
+        self.assertIn("--user-data-dir=.auth", command[1])
+        self.assertEqual(command[2], "https://app.twinmind.com/login")
+
+    def test_quote_command_quotes_parts_with_spaces(self):
+        command = quote_command(["C:\\Program Files\\Chrome\\chrome.exe", "--flag=value"])
+        self.assertEqual(command, '"C:\\Program Files\\Chrome\\chrome.exe" --flag=value')
 
 
 if __name__ == "__main__":
