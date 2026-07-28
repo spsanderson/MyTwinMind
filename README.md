@@ -49,6 +49,16 @@ Export memories to Markdown:
 python scrape_twinmind_memories.py --output memories
 ```
 
+Each export also maintains `twinmind_memories.db`, a SQLite ledger containing
+the link and title of every attempted memory plus whether its Markdown download
+succeeded. Successful links are skipped on later runs, while failed or
+interrupted downloads remain eligible for retry. Use `--database PATH` to put
+the ledger elsewhere:
+
+```powershell
+python scrape_twinmind_memories.py --output memories --database data/memories.db
+```
+
 You can also run without activating the virtual environment by calling its Python
 directly.
 

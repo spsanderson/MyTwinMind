@@ -1,14 +1,22 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from scrape_twinmind_memories import (
     MemoryRecord,
     build_manual_login_command,
+<<<<<<< ours
+    open_memory_database,
+=======
+    click_memory_target,
+>>>>>>> theirs
     quote_command,
+    record_download,
     render_markdown,
     sanitize_filename,
     unique_markdown_path,
+    was_successfully_downloaded,
     write_memory_markdown,
 )
 
@@ -85,6 +93,49 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
     def test_quote_command_quotes_parts_with_spaces(self):
         command = quote_command(["C:\\Program Files\\Chrome\\chrome.exe", "--flag=value"])
         self.assertEqual(command, '"C:\\Program Files\\Chrome\\chrome.exe" --flag=value')
+
+<<<<<<< ours
+    def test_database_records_download_status_and_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database_path = Path(tmp) / "state" / "memories.db"
+            with open_memory_database(database_path) as database:
+                record_download(database, "https://example.test/memory/1", "First", False)
+                self.assertFalse(
+                    was_successfully_downloaded(database, "https://example.test/memory/1")
+                )
+                record_download(database, "https://example.test/memory/1", "Updated", True)
+                self.assertTrue(
+                    was_successfully_downloaded(database, "https://example.test/memory/1")
+                )
+                row = database.execute(
+                    "SELECT title, successful_download FROM memories"
+                ).fetchone()
+                self.assertEqual(row, ("Updated", 1))
+
+    def test_database_never_downgrades_successful_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open_memory_database(Path(tmp) / "memories.db") as database:
+                link = "https://example.test/memory/2"
+                record_download(database, link, "Done", True)
+                record_download(database, link, "Done", False)
+                self.assertTrue(was_successfully_downloaded(database, link))
+=======
+    def test_click_memory_target_uses_normal_playwright_click(self):
+        target = Mock()
+
+        click_memory_target(target)
+
+        target.click.assert_called_once_with(timeout=3000)
+        target.evaluate.assert_not_called()
+
+    def test_click_memory_target_falls_back_to_dom_click_outside_viewport(self):
+        target = Mock()
+        target.click.side_effect = RuntimeError("element is outside of the viewport")
+
+        click_memory_target(target)
+
+        target.evaluate.assert_called_once_with("element => element.click()")
+>>>>>>> theirs
 
 
 if __name__ == "__main__":
