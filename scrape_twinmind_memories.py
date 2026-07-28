@@ -13,7 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set
+from typing import Dict, List, Optional, Sequence, Set
 
 
 LOGIN_URL = "https://app.twinmind.com/login"
@@ -133,7 +133,11 @@ def import_playwright():
         from playwright.sync_api import Error, TimeoutError, sync_playwright
     except ImportError as exc:
         raise SystemExit(
-            "Playwright is not installed. Run `python -m pip install -r requirements.txt`."
+            "Playwright is not installed in this Python environment.\n"
+            "Recommended setup: `python setup_venv.py`\n"
+            "Or, inside an activated virtual environment, run:\n"
+            "  python -m pip install -r requirements.txt\n"
+            "  python -m playwright install chromium"
         ) from exc
     return Error, TimeoutError, sync_playwright
 
