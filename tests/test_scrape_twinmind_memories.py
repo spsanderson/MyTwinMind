@@ -15,6 +15,7 @@ from scrape_twinmind_memories import (
     render_markdown,
     sanitize_filename,
     scrape_date_groups,
+    wait_for_memory_list_change,
     unique_markdown_path,
     was_successfully_downloaded,
     write_memory_markdown,
@@ -22,8 +23,9 @@ from scrape_twinmind_memories import (
 
 
 class FakeButton:
-    def __init__(self, text):
+    def __init__(self, text, selected=False):
         self.text = text
+        self.selected = selected
         self.click_count = 0
 
     def inner_text(self, timeout=1000):
@@ -34,6 +36,11 @@ class FakeButton:
 
     def evaluate(self, script):
         self.click_count += 1
+
+    def get_attribute(self, name):
+        if name == "aria-selected" and self.selected:
+            return "true"
+        return None
 
 
 class FakeLocator:
@@ -55,6 +62,9 @@ class FakeLocator:
     def nth(self, index):
         return self.items[index]
 
+    def inner_text(self, timeout=1000):
+        return "current list"
+
 
 class FakePage:
     def __init__(self, date_buttons, has_date_list=True):
@@ -73,11 +83,19 @@ class FakePage:
     def wait_for_timeout(self, timeout):
         self.waited.append(timeout)
 
+    def wait_for_function(self, expression, arg, timeout):
+        self.waited.append((expression, arg, timeout))
+
     def evaluate(self, script, selector):
         return True
 
 
 class ScrapeTwinMindMemoriesTests(unittest.TestCase):
+    def test_date_button_selector_is_anchored_to_memory_list(self):
+        self.assertIn("size-full", MEMORY_DATE_BUTTON_SELECTOR)
+        self.assertIn("preceding::ul[li/button][1]", MEMORY_DATE_BUTTON_SELECTOR)
+        self.assertNotIn("/html/body", MEMORY_DATE_BUTTON_SELECTOR)
+
     def test_sanitize_filename_removes_windows_unsafe_characters(self):
         self.assertEqual(
             sanitize_filename(' Team Sync: "Launch" / Notes?* '),
@@ -192,7 +210,7 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         target.evaluate.assert_called_once_with("element => element.click()")
 
     def test_scrape_date_groups_clicks_each_date_and_delegates_scraping(self):
-        buttons = [FakeButton("Today"), FakeButton("Yesterday")]
+        buttons = [FakeButton("Today", selected=True), FakeButton("Yesterday")]
         page = FakePage(buttons)
         database = object()
         seen = set()
@@ -212,13 +230,21 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
 
         self.assertEqual([button.click_count for button in buttons], [1, 1])
         self.assertEqual(scrape_current.call_count, 2)
+        self.assertEqual(len(page.waited), 1)
+        self.assertEqual(page.waited[0][1], [MEMORY_LIST_SELECTOR, "current list"])
         first_call = scrape_current.call_args_list[0].args
+        second_call = scrape_current.call_args_list[1].args
         self.assertIs(first_call[1], database)
-        self.assertIs(first_call[2], seen)
+        self.assertIsNot(first_call[2], seen)
+        self.assertIsNot(first_call[2], second_call[2])
         self.assertEqual(first_call[3], output_dir)
 
     def test_scrape_date_groups_stops_after_global_limit(self):
-        buttons = [FakeButton("Today"), FakeButton("Yesterday"), FakeButton("Older")]
+        buttons = [
+            FakeButton("Today", selected=True),
+            FakeButton("Yesterday"),
+            FakeButton("Older"),
+        ]
         page = FakePage(buttons)
         written = []
 
@@ -237,7 +263,11 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         self.assertEqual(scrape_current.call_count, 1)
 
     def test_scrape_date_groups_skips_duplicate_date_keys(self):
-        buttons = [FakeButton("Today"), FakeButton("Today"), FakeButton("Yesterday")]
+        buttons = [
+            FakeButton("Today", selected=True),
+            FakeButton("Today"),
+            FakeButton("Yesterday"),
+        ]
         page = FakePage(buttons)
 
         with patch("scrape_twinmind_memories.scrape_current_memory_list") as scrape_current:
@@ -257,6 +287,16 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
             )
 
         scrape_current.assert_called_once()
+
+    def test_wait_for_memory_list_change_uses_previous_list_content(self):
+        page = Mock()
+
+        wait_for_memory_list_change(page, "old memory")
+
+        page.wait_for_function.assert_called_once()
+        args, kwargs = page.wait_for_function.call_args
+        self.assertEqual(args[1], [MEMORY_LIST_SELECTOR, "old memory"])
+        self.assertEqual(kwargs["timeout"], 10000)
 
 
 if __name__ == "__main__":

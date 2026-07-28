@@ -38,8 +38,10 @@ MEMORY_ITEM_SELECTOR = (
     f"{MEMORY_LIST_SELECTOR} li.mb-4 > div:nth-child(2) > ul:nth-child(1) > li"
 )
 MEMORY_CLICK_TARGET_SELECTOR = "div:nth-child(1) > div:nth-child(2) > div:nth-child(1)"
-MEMORY_DATE_LIST_XPATH = "/html/body/div[4]/div/div[2]/div[3]/ul"
-MEMORY_DATE_BUTTON_SELECTOR = f"xpath={MEMORY_DATE_LIST_XPATH}/li/button"
+MEMORY_DATE_BUTTON_SELECTOR = (
+    "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' size-full ')]"
+    "/div[1]/ul[1]/preceding::ul[li/button][1]/li/button"
+)
 
 
 @dataclass(frozen=True)
@@ -404,6 +406,34 @@ def read_memory_date_key(button, source_index: int) -> str:
     return f"date-index-{source_index}"
 
 
+def memory_date_is_selected(button) -> bool:
+    """Return whether a date button already represents the displayed list."""
+    selected_values = (
+        ("aria-selected", "true"),
+        ("aria-pressed", "true"),
+        ("aria-current", "true"),
+        ("data-state", "active"),
+    )
+    return any(button.get_attribute(name) == value for name, value in selected_values)
+
+
+def memory_list_content(page) -> str:
+    """Read the current list text so a date switch can wait for new content."""
+    return page.locator(MEMORY_LIST_SELECTOR).first.inner_text(timeout=1000)
+
+
+def wait_for_memory_list_change(page, previous_content: str) -> None:
+    """Wait until the selected date's list replaces the previously displayed list."""
+    page.wait_for_function(
+        """([selector, previous]) => {
+            const list = document.querySelector(selector);
+            return list && (list.innerText || "") !== previous;
+        }""",
+        [MEMORY_LIST_SELECTOR, previous_content],
+        timeout=10000,
+    )
+
+
 def read_clipboard(page) -> str:
     return page.evaluate("navigator.clipboard.readText()")
 
@@ -632,9 +662,12 @@ def scrape_date_groups(
             continue
         visited_dates.add(date_key)
         try:
+            was_selected = memory_date_is_selected(button)
+            previous_content = memory_list_content(page)
             click_memory_date(button)
             debug_log(debug, f"Clicked memory date {date_key!r}.")
-            page.wait_for_timeout(800)
+            if not was_selected:
+                wait_for_memory_list_change(page, previous_content)
             page.locator(MEMORY_LIST_SELECTOR).first.wait_for(
                 state="visible", timeout=10000
             )
@@ -642,8 +675,9 @@ def scrape_date_groups(
         except Exception as exc:
             debug_log(debug, f"Skipped memory date {date_key!r}: {exc}")
             continue
+        date_seen: Set[str] = set()
         scrape_current_memory_list(
-            page, database, seen, output_dir, overwrite, limit, debug, written
+            page, database, date_seen, output_dir, overwrite, limit, debug, written
         )
 
 
