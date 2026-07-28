@@ -38,6 +38,8 @@ MEMORY_ITEM_SELECTOR = (
     f"{MEMORY_LIST_SELECTOR} li.mb-4 > div:nth-child(2) > ul:nth-child(1) > li"
 )
 MEMORY_CLICK_TARGET_SELECTOR = "div:nth-child(1) > div:nth-child(2) > div:nth-child(1)"
+MEMORY_DATE_LIST_XPATH = "/html/body/div[4]/div/div[2]/div[3]/ul"
+MEMORY_DATE_BUTTON_SELECTOR = f"xpath={MEMORY_DATE_LIST_XPATH}/li/button"
 
 
 @dataclass(frozen=True)
@@ -388,6 +390,20 @@ def click_memory_target(target) -> None:
         target.evaluate("element => element.click()")
 
 
+def click_memory_date(button) -> None:
+    click_memory_target(button)
+
+
+def read_memory_date_key(button, source_index: int) -> str:
+    try:
+        text = compact_text(button.inner_text(timeout=1000))
+        if text:
+            return text[:180]
+    except Exception:
+        pass
+    return f"date-index-{source_index}"
+
+
 def read_clipboard(page) -> str:
     return page.evaluate("navigator.clipboard.readText()")
 
@@ -538,6 +554,99 @@ def scroll_memory_list(page, debug: bool = False) -> bool:
     return False
 
 
+def reset_memory_list_scroll(page, debug: bool = False) -> None:
+    script = """
+    (selector) => {
+      const list = document.querySelector(selector);
+      if (!list) return false;
+      list.scrollTop = 0;
+      return true;
+    }
+    """
+    try:
+        did_reset = page.evaluate(script, MEMORY_LIST_SELECTOR)
+        debug_log(debug, f"Reset memory list scroll: {did_reset}")
+    except Exception as exc:
+        debug_log(debug, f"Could not reset memory list scroll: {exc}")
+
+
+def scrape_current_memory_list(
+    page,
+    database: sqlite3.Connection,
+    seen: Set[str],
+    output_dir: Path,
+    overwrite: bool,
+    limit: Optional[int],
+    debug: bool,
+    written: List[Path],
+) -> None:
+    stagnant_rounds = 0
+    while limit is None or len(written) < limit:
+        before_seen = len(seen)
+        scrape_visible_items(
+            page, database, seen, output_dir, overwrite, limit, debug, written
+        )
+        if limit is not None and len(written) >= limit:
+            break
+        moved = scroll_memory_list(page, debug)
+        if len(seen) == before_seen:
+            stagnant_rounds += 1
+        else:
+            stagnant_rounds = 0
+        if not moved and stagnant_rounds >= 2:
+            break
+
+
+def scrape_date_groups(
+    page,
+    database: sqlite3.Connection,
+    seen: Set[str],
+    output_dir: Path,
+    overwrite: bool,
+    limit: Optional[int],
+    debug: bool,
+    written: List[Path],
+) -> None:
+    date_locator = page.locator(MEMORY_DATE_BUTTON_SELECTOR)
+    try:
+        date_locator.first.wait_for(state="visible", timeout=3000)
+    except Exception as exc:
+        debug_log(debug, f"Memory date list not found; scraping current list only: {exc}")
+        scrape_current_memory_list(
+            page, database, seen, output_dir, overwrite, limit, debug, written
+        )
+        return
+
+    visited_dates: Set[str] = set()
+    date_index = 0
+    while limit is None or len(written) < limit:
+        date_locator = page.locator(MEMORY_DATE_BUTTON_SELECTOR)
+        count = date_locator.count()
+        if date_index >= count:
+            break
+        button = date_locator.nth(date_index)
+        date_key = read_memory_date_key(button, date_index + 1)
+        date_index += 1
+        if date_key in visited_dates:
+            debug_log(debug, f"Skipping already visited memory date {date_key!r}.")
+            continue
+        visited_dates.add(date_key)
+        try:
+            click_memory_date(button)
+            debug_log(debug, f"Clicked memory date {date_key!r}.")
+            page.wait_for_timeout(800)
+            page.locator(MEMORY_LIST_SELECTOR).first.wait_for(
+                state="visible", timeout=10000
+            )
+            reset_memory_list_scroll(page, debug)
+        except Exception as exc:
+            debug_log(debug, f"Skipped memory date {date_key!r}: {exc}")
+            continue
+        scrape_current_memory_list(
+            page, database, seen, output_dir, overwrite, limit, debug, written
+        )
+
+
 def scrape_memories(
     profile_dir: Path,
     output_dir: Path,
@@ -565,21 +674,9 @@ def scrape_memories(
         context.grant_permissions(["clipboard-read", "clipboard-write"], origin=APP_ORIGIN)
         page = context.pages[0] if context.pages else context.new_page()
         open_memories(page, TimeoutError, debug)
-        stagnant_rounds = 0
-        while limit is None or len(written) < limit:
-            before_seen = len(seen)
-            scrape_visible_items(
-                page, database, seen, output_dir, overwrite, limit, debug, written
-            )
-            if limit is not None and len(written) >= limit:
-                break
-            moved = scroll_memory_list(page, debug)
-            if len(seen) == before_seen:
-                stagnant_rounds += 1
-            else:
-                stagnant_rounds = 0
-            if not moved and stagnant_rounds >= 2:
-                break
+        scrape_date_groups(
+            page, database, seen, output_dir, overwrite, limit, debug, written
+        )
         context.close()
     return written
 
