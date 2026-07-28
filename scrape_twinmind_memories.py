@@ -11,12 +11,14 @@ import datetime as dt
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, Iterator, List, Optional, Sequence, Set
 
 
 LOGIN_URL = "https://app.twinmind.com/login"
@@ -24,6 +26,7 @@ APP_ORIGIN = "https://app.twinmind.com"
 DEFAULT_AUTH_STATE = Path(".auth") / "twinmind_state.json"
 DEFAULT_PROFILE_DIR = Path(".auth") / "twinmind_chrome_profile"
 DEFAULT_OUTPUT_DIR = Path("memories")
+DEFAULT_DATABASE_PATH = Path("twinmind_memories.db")
 DEFAULT_BROWSER_CHANNEL = "chrome"
 
 LOGIN_BUTTON_SELECTOR = r".bg-\[\#0b4f75\]"
@@ -126,6 +129,55 @@ def write_memory_markdown(
         raise FileExistsError(path)
     path.write_text(render_markdown(record), encoding="utf-8")
     return path
+
+
+@contextmanager
+def open_memory_database(database_path: Path) -> Iterator[sqlite3.Connection]:
+    """Open the download ledger and create its schema when necessary."""
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memories (
+            link TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            successful_download INTEGER NOT NULL DEFAULT 0
+                CHECK (successful_download IN (0, 1))
+        )
+        """
+    )
+    connection.commit()
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def was_successfully_downloaded(connection: sqlite3.Connection, link: str) -> bool:
+    row = connection.execute(
+        "SELECT successful_download FROM memories WHERE link = ?", (link,)
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def record_download(
+    connection: sqlite3.Connection, link: str, title: str, successful: bool
+) -> None:
+    """Upsert an attempt without ever changing a successful record to failed."""
+    connection.execute(
+        """
+        INSERT INTO memories (link, title, successful_download)
+        VALUES (?, ?, ?)
+        ON CONFLICT(link) DO UPDATE SET
+            title = excluded.title,
+            successful_download = MAX(
+                memories.successful_download,
+                excluded.successful_download
+            )
+        """,
+        (link, title, int(successful)),
+    )
+    connection.commit()
 
 
 def debug_log(enabled: bool, message: str) -> None:
@@ -314,11 +366,26 @@ def click_memory_item(item) -> None:
         target = item.locator(selector).first
         try:
             if target.is_visible(timeout=500):
-                target.click(timeout=3000)
+                click_memory_target(target)
                 return
         except Exception:
             continue
-    item.click(timeout=3000)
+    click_memory_target(item)
+
+
+def click_memory_target(target) -> None:
+    """Click a memory even when TwinMind's nested scroller confuses Playwright.
+
+    Opening a memory changes the page layout. Items that remain visible in the
+    memories sidebar can then be reported as outside the viewport by
+    Playwright's actionability checks, even after it tries to scroll them. A
+    native DOM click is an appropriate fallback here because these list items
+    are already discovered from TwinMind's visible memories list.
+    """
+    try:
+        target.click(timeout=3000)
+    except Exception:
+        target.evaluate("element => element.click()")
 
 
 def read_clipboard(page) -> str:
@@ -392,6 +459,7 @@ def copy_section_text(page, section: SectionSpec, debug: bool = False) -> str:
 
 def scrape_visible_items(
     page,
+    database: sqlite3.Connection,
     seen: Set[str],
     output_dir: Path,
     overwrite: bool,
@@ -412,9 +480,17 @@ def scrape_visible_items(
             continue
         seen.add(key)
         source_index = len(seen)
+        link = ""
         try:
             click_memory_item(item)
             page.wait_for_timeout(1000)
+            link = page.url
+            if not overwrite and was_successfully_downloaded(database, link):
+                debug_log(debug, f"Already downloaded; skipping {link}")
+                continue
+            # Record the attempt before extraction so interrupted and failed runs
+            # remain eligible to retry next time.
+            record_download(database, link, title, successful=False)
             sections = {
                 section.name: copy_section_text(page, section, debug) for section in SECTIONS
             }
@@ -425,9 +501,12 @@ def scrape_visible_items(
                 sections=sections,
             )
             path = write_memory_markdown(record, output_dir, overwrite=overwrite)
+            record_download(database, link, title, successful=True)
             written.append(path)
             print(f"Wrote {path}", flush=True)
         except Exception as exc:
+            if link:
+                record_download(database, link, title, successful=False)
             print(f"Skipped memory {source_index} ({title!r}): {exc}", file=sys.stderr)
 
 
@@ -467,6 +546,7 @@ def scrape_memories(
     overwrite: bool,
     debug: bool,
     browser_channel: str,
+    database_path: Path = DEFAULT_DATABASE_PATH,
 ) -> List[Path]:
     if not profile_dir.exists():
         raise SystemExit(
@@ -476,7 +556,7 @@ def scrape_memories(
     _, TimeoutError, sync_playwright = import_playwright()
     written: List[Path] = []
     seen: Set[str] = set()
-    with sync_playwright() as playwright:
+    with open_memory_database(database_path) as database, sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
             channel=browser_channel,
@@ -488,7 +568,9 @@ def scrape_memories(
         stagnant_rounds = 0
         while limit is None or len(written) < limit:
             before_seen = len(seen)
-            scrape_visible_items(page, seen, output_dir, overwrite, limit, debug, written)
+            scrape_visible_items(
+                page, database, seen, output_dir, overwrite, limit, debug, written
+            )
             if limit is not None and len(written) >= limit:
                 break
             moved = scroll_memory_list(page, debug)
@@ -528,6 +610,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=DEFAULT_OUTPUT_DIR,
         help=f"Directory for Markdown exports. Default: {DEFAULT_OUTPUT_DIR}",
     )
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=DEFAULT_DATABASE_PATH,
+        help=f"SQLite download ledger. Default: {DEFAULT_DATABASE_PATH}",
+    )
     parser.add_argument("--limit", type=int, help="Export at most N memories.")
     parser.add_argument("--headless", action="store_true", help="Run export browser headlessly.")
     parser.add_argument(
@@ -554,6 +642,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         overwrite=args.overwrite,
         debug=args.debug,
         browser_channel=args.browser_channel,
+        database_path=args.database,
     )
     print(f"Exported {len(written)} TwinMind memories to {args.output}")
     return 0
