@@ -133,10 +133,11 @@ def import_playwright():
         from playwright.sync_api import Error, TimeoutError, sync_playwright
     except ImportError as exc:
         raise SystemExit(
-            "Playwright is not installed in this Python environment.\n"
+            "Playwright could not be imported in this Python environment.\n"
+            f"Import error: {exc}\n"
             "Recommended setup: `python setup_venv.py`\n"
             "Or, inside an activated virtual environment, run:\n"
-            "  python -m pip install -r requirements.txt\n"
+            "  python -m pip install --upgrade --force-reinstall -r requirements.txt\n"
             "  python -m playwright install chromium"
         ) from exc
     return Error, TimeoutError, sync_playwright
