@@ -229,3 +229,4 @@ twinmind_memories.db-journal
 twinmind_memories.db-shm
 twinmind_memories.db-wal
 /data
+data/
