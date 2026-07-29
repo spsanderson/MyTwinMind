@@ -669,10 +669,7 @@ def scrape_date_groups(
             if not was_selected:
                 try:
                     wait_for_memory_list_change(page, previous_content)
-                except Exception as exc:
-                    page.locator(MEMORY_LIST_SELECTOR).first.wait_for(
-                        state="visible", timeout=10000
-                    )
+except Exception as exc:
                     debug_log(
                         debug,
                         f"Memory date {date_key!r} did not change after click; "
