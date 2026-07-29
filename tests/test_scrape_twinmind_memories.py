@@ -67,9 +67,10 @@ class FakeLocator:
 
 
 class FakePage:
-    def __init__(self, date_buttons, has_date_list=True):
+    def __init__(self, date_buttons, has_date_list=True, wait_for_change_error=None):
         self.date_buttons = date_buttons
         self.has_date_list = has_date_list
+        self.wait_for_change_error = wait_for_change_error
         self.waited = []
 
     def locator(self, selector):
@@ -84,6 +85,8 @@ class FakePage:
         self.waited.append(timeout)
 
     def wait_for_function(self, expression, arg, timeout):
+        if self.wait_for_change_error:
+            raise self.wait_for_change_error
         self.waited.append((expression, arg, timeout))
 
     def evaluate(self, script, selector):
@@ -277,6 +280,18 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
 
         self.assertEqual([button.click_count for button in buttons], [1, 0, 1])
         self.assertEqual(scrape_current.call_count, 2)
+
+    def test_scrape_date_groups_scrapes_visible_list_when_date_does_not_change(self):
+        buttons = [FakeButton("Today", selected=False)]
+        page = FakePage(buttons, wait_for_change_error=RuntimeError("same list"))
+
+        with patch("scrape_twinmind_memories.scrape_current_memory_list") as scrape_current:
+            scrape_date_groups(
+                page, object(), set(), Path("memories"), False, None, False, []
+            )
+
+        self.assertEqual(buttons[0].click_count, 1)
+        scrape_current.assert_called_once()
 
     def test_scrape_date_groups_falls_back_to_current_list_when_dates_missing(self):
         page = FakePage([], has_date_list=False)

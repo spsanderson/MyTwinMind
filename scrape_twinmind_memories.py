@@ -667,7 +667,14 @@ def scrape_date_groups(
             click_memory_date(button)
             debug_log(debug, f"Clicked memory date {date_key!r}.")
             if not was_selected:
-                wait_for_memory_list_change(page, previous_content)
+                try:
+                    wait_for_memory_list_change(page, previous_content)
+except Exception as exc:
+                    debug_log(
+                        debug,
+                        f"Memory date {date_key!r} did not change after click; "
+                        f"scraping visible list: {exc}",
+                    )
             page.locator(MEMORY_LIST_SELECTOR).first.wait_for(
                 state="visible", timeout=10000
             )
