@@ -66,6 +66,16 @@ python scrape_twinmind_memories.py --output memories --database ..\twinmind-priv
 If you use a custom `--output` directory or `--database` path, keep it outside
 tracked source paths or add it to `.gitignore` before exporting private data.
 
+View a SQLite ledger in a local read-only browser UI:
+
+```powershell
+python view_twinmind_db.py
+```
+
+Open the printed local URL, then enter the path to the `.db` file you want to
+inspect. The viewer reads the `memories` table only and does not create, update,
+or repair ledger files.
+
 You can also run without activating the virtual environment by calling its Python
 directly.
 
@@ -148,6 +158,25 @@ python scrape_twinmind_memories.py --output ..\twinmind-private\exports --databa
 python scrape_twinmind_memories.py --limit 10 --headless
 python scrape_twinmind_memories.py --output memories --overwrite
 python scrape_twinmind_memories.py --browser-channel chrome --profile-dir .auth\twinmind_chrome_profile
+```
+
+### `view_twinmind_db.py`
+
+Use this script to view a TwinMind SQLite download ledger in a local read-only
+browser UI.
+
+Arguments:
+
+| Argument | Type | Default | How to use it |
+| --- | --- | --- | --- |
+| `--host HOST` | text | `127.0.0.1` | Choose the local interface to bind. |
+| `--port PORT` | integer | `8765` | Choose the local port. |
+
+Examples:
+
+```powershell
+python view_twinmind_db.py
+python view_twinmind_db.py --port 8766
 ```
 
 ## Python function reference
