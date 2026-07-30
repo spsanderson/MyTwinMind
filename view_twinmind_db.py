@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import tempfile
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,6 +15,7 @@ from urllib.parse import quote
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
 
 HTML_PAGE = r"""<!doctype html>
@@ -122,6 +124,10 @@ HTML_PAGE = r"""<!doctype html>
       color: var(--text);
     }
 
+    input[type="file"] {
+      padding: 8px 10px;
+    }
+
     button {
       min-width: 92px;
       align-self: end;
@@ -154,6 +160,12 @@ HTML_PAGE = r"""<!doctype html>
       background: var(--error-bg);
       color: var(--error-text);
       border: 1px solid #fecdd3;
+    }
+
+    .file-status {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
     }
 
     .summary {
@@ -289,12 +301,13 @@ HTML_PAGE = r"""<!doctype html>
       <p class="subtle" id="loadedPath"></p>
     </header>
 
-    <form class="path-bar" id="pathForm">
+    <form class="path-bar" id="fileForm">
       <div>
-        <label for="dbPath">SQLite .db path</label>
-        <input id="dbPath" name="dbPath" autocomplete="off" spellcheck="false" placeholder="twinmind_memories.db">
+        <label for="dbFile">SQLite .db file</label>
+        <input id="dbFile" name="dbFile" type="file" accept=".db">
+        <p class="file-status" id="fileStatus">No file selected.</p>
       </div>
-      <button id="loadButton" type="submit">Load</button>
+      <button id="loadButton" type="submit" disabled>Load</button>
     </form>
 
     <p class="message" id="message"></p>
@@ -330,15 +343,16 @@ HTML_PAGE = r"""<!doctype html>
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td class="empty" colspan="3">Enter a database path to view the ledger.</td></tr>
+          <tr><td class="empty" colspan="3">Select a database file to view the ledger.</td></tr>
         </tbody>
       </table>
     </section>
   </main>
 
   <script>
-    const form = document.getElementById("pathForm");
-    const dbPath = document.getElementById("dbPath");
+    const form = document.getElementById("fileForm");
+    const dbFile = document.getElementById("dbFile");
+    const fileStatus = document.getElementById("fileStatus");
     const loadButton = document.getElementById("loadButton");
     const message = document.getElementById("message");
     const loadedPath = document.getElementById("loadedPath");
@@ -432,15 +446,18 @@ HTML_PAGE = r"""<!doctype html>
       }
     }
 
-    async function loadLedger(path) {
+    async function loadLedger(file) {
       loadButton.disabled = true;
       loadButton.textContent = "Loading";
       clearError();
       try {
-        const response = await fetch("/api/ledger", {
+        if (!file) {
+          throw new Error("Select a .db file first.");
+        }
+        const response = await fetch("/api/ledger-file", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
+          headers: { "X-Filename": file.name },
+          body: file,
         });
         const data = await response.json();
         if (!response.ok) {
@@ -459,12 +476,20 @@ HTML_PAGE = r"""<!doctype html>
       } finally {
         loadButton.disabled = false;
         loadButton.textContent = "Load";
+        loadButton.disabled = !dbFile.files.length;
       }
     }
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      loadLedger(dbPath.value);
+      loadLedger(dbFile.files[0]);
+    });
+
+    dbFile.addEventListener("change", () => {
+      const file = dbFile.files[0];
+      loadButton.disabled = !file;
+      fileStatus.textContent = file ? `${file.name} (${file.size.toLocaleString()} bytes)` : "No file selected.";
+      clearError();
     });
 
     searchInput.addEventListener("input", renderRows);
@@ -490,6 +515,35 @@ HTML_PAGE = r"""<!doctype html>
 
 class LedgerReadError(ValueError):
     """Raised when a ledger path cannot be read as a TwinMind ledger."""
+
+
+def validate_uploaded_ledger(filename: str, content_length: int) -> None:
+    if not filename.strip():
+        raise LedgerReadError("Selected file is missing a filename.")
+    if Path(filename).suffix.lower() != ".db":
+        raise LedgerReadError("Choose a file with a .db extension.")
+    if content_length <= 0:
+        raise LedgerReadError("Selected database file is empty.")
+    if content_length > MAX_UPLOAD_BYTES:
+        raise LedgerReadError("Selected database file is larger than 100 MB.")
+
+
+def read_uploaded_ledger(filename: str, content: bytes) -> dict[str, Any]:
+    validate_uploaded_ledger(filename, len(content))
+    temp_path: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
+            temp_file.write(content)
+            temp_path = Path(temp_file.name)
+        ledger = read_ledger(temp_path)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+    ledger["path"] = filename
+    return ledger
 
 
 def resolve_database_path(raw_path: str, base_dir: Path) -> Path:
@@ -571,9 +625,15 @@ class LedgerViewerHandler(BaseHTTPRequestHandler):
         self.send_text(HTTPStatus.OK, HTML_PAGE, "text/html; charset=utf-8")
 
     def do_POST(self) -> None:
-        if self.path != "/api/ledger":
-            self.send_error(HTTPStatus.NOT_FOUND)
+        if self.path == "/api/ledger":
+            self.handle_path_ledger()
             return
+        if self.path == "/api/ledger-file":
+            self.handle_file_ledger()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
+    def handle_path_ledger(self) -> None:
         try:
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
@@ -590,6 +650,34 @@ class LedgerViewerHandler(BaseHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST, {"error": "Request body must be valid JSON."}
             )
             return
+        except LedgerReadError as exc:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        self.send_json(HTTPStatus.OK, response)
+
+    def handle_file_ledger(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "Content-Length must be a number."}
+            )
+            return
+        if length <= 0:
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "Selected database file is empty."},
+            )
+            return
+        if length > MAX_UPLOAD_BYTES:
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "Selected database file is larger than 100 MB."},
+            )
+            return
+        filename = self.headers.get("X-Filename", "")
+        try:
+            response = read_uploaded_ledger(filename, self.rfile.read(length))
         except LedgerReadError as exc:
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
