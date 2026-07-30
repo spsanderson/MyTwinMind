@@ -72,9 +72,9 @@ View a SQLite ledger in a local read-only browser UI:
 python view_twinmind_db.py
 ```
 
-Open the printed local URL, then enter the path to the `.db` file you want to
-inspect. The viewer reads the `memories` table only and does not create, update,
-or repair ledger files.
+Open the printed local URL, then select the `.db` file you want to inspect. The
+viewer reads the `memories` table only and does not create, update, or repair
+ledger files.
 
 You can also run without activating the virtual environment by calling its Python
 directly.
@@ -162,8 +162,8 @@ python scrape_twinmind_memories.py --browser-channel chrome --profile-dir .auth\
 
 ### `view_twinmind_db.py`
 
-Use this script to view a TwinMind SQLite download ledger in a local read-only
-browser UI.
+Use this script to select and view a TwinMind SQLite download ledger in a local
+read-only browser UI.
 
 Arguments:
 
