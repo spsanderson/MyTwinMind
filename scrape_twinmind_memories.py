@@ -990,7 +990,7 @@ def scrape_memories(
                 "`python scrape_twinmind_memories.py --login` first."
             )
             logger.warning("missing_profile", message)
-raise SystemExit(1)
+            raise SystemExit(1)
         _, TimeoutError, sync_playwright = import_playwright()
         with open_memory_database(database_path) as database, sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
