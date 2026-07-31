@@ -573,9 +573,10 @@ class LogReadError(ValueError):
 
 
 def validate_uploaded_logs(filename: str, content_length: int) -> None:
-    if not filename.strip():
+    cleaned = filename.strip()
+    if not cleaned:
         raise LogReadError("Selected file is missing a filename.")
-    if Path(filename).suffix.lower() != ".db":
+    if Path(cleaned).suffix.lower() != ".db":
         raise LogReadError("Choose a file with a .db extension.")
     if content_length <= 0:
         raise LogReadError("Selected database file is empty.")
