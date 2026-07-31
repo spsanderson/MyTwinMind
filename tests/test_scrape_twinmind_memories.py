@@ -23,6 +23,7 @@ from scrape_twinmind_memories import (
     render_markdown,
     sanitize_filename,
     scrape_date_groups,
+    scrape_visible_items,
     wait_for_memory_list_change,
     unique_markdown_path,
     was_successfully_downloaded,
@@ -99,6 +100,45 @@ class FakePage:
 
     def evaluate(self, script, selector):
         return True
+
+
+class FakeMemoryItem:
+    def __init__(self, title, key, link):
+        self.title = title
+        self.key = key
+        self.link = link
+
+
+class FakeMemoryPage:
+    def __init__(self, items):
+        self.items = items
+        self.url = "https://app.twinmind.com"
+        self.back_count = 0
+        self.list_wait_count = 0
+        self.waited = []
+
+    def locator(self, selector):
+        if selector == MEMORY_ITEM_SELECTOR:
+            return FakeLocator(self.items)
+        if selector == MEMORY_LIST_SELECTOR:
+            page = self
+
+            class ListLocator(FakeLocator):
+                def wait_for(self, state="visible", timeout=3000):
+                    page.list_wait_count += 1
+
+            return ListLocator()
+        return FakeLocator()
+
+    def open_memory(self, item):
+        self.url = item.link
+
+    def wait_for_timeout(self, timeout):
+        self.waited.append(timeout)
+
+    def go_back(self, wait_until="domcontentloaded", timeout=5000):
+        self.back_count += 1
+        self.url = "https://app.twinmind.com"
 
 
 class ScrapeTwinMindMemoriesTests(unittest.TestCase):
@@ -409,6 +449,104 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         args, kwargs = page.wait_for_function.call_args
         self.assertEqual(args[1], [MEMORY_LIST_SELECTOR, "old memory"])
         self.assertEqual(kwargs["timeout"], 10000)
+
+    def test_scrape_visible_items_returns_to_list_after_downloaded_skip(self):
+        downloaded = "https://app.twinmind.com/m/already"
+        new = "https://app.twinmind.com/m/new"
+        page = FakeMemoryPage(
+            [
+                FakeMemoryItem("Already", "already-key", downloaded),
+                FakeMemoryItem("New", "new-key", new),
+            ]
+        )
+        written = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with open_memory_database(Path(tmp) / "memories.db") as database:
+                record_download(database, downloaded, "Already", True)
+                with (
+                    patch(
+                        "scrape_twinmind_memories.click_memory_item",
+                        side_effect=page.open_memory,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_title",
+                        side_effect=lambda item, source_index: item.title,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_key",
+                        side_effect=lambda item, source_index: item.key,
+                    ),
+                    patch("scrape_twinmind_memories.copy_section_text", return_value="text"),
+                    patch(
+                        "scrape_twinmind_memories.write_memory_markdown",
+                        return_value=Path("memories/New.md"),
+                    ),
+                ):
+                    with redirect_stdout(io.StringIO()):
+                        scrape_visible_items(
+                            page,
+                            database,
+                            set(),
+                            Path("memories"),
+                            False,
+                            1,
+                            False,
+                            written,
+                        )
+
+        self.assertEqual(written, [Path("memories/New.md")])
+        self.assertEqual(page.back_count, 2)
+        self.assertEqual(page.list_wait_count, 2)
+
+    def test_scrape_visible_items_skips_duplicate_opened_links(self):
+        link = "https://app.twinmind.com/m/same"
+        page = FakeMemoryPage(
+            [
+                FakeMemoryItem("First", "first-key", link),
+                FakeMemoryItem("Second", "second-key", link),
+            ]
+        )
+        written = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with open_memory_database(Path(tmp) / "memories.db") as database:
+                with (
+                    patch(
+                        "scrape_twinmind_memories.click_memory_item",
+                        side_effect=page.open_memory,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_title",
+                        side_effect=lambda item, source_index: item.title,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_key",
+                        side_effect=lambda item, source_index: item.key,
+                    ),
+                    patch("scrape_twinmind_memories.copy_section_text", return_value="text"),
+                    patch(
+                        "scrape_twinmind_memories.write_memory_markdown",
+                        return_value=Path("memories/First.md"),
+                    ) as write_markdown,
+                ):
+                    with redirect_stdout(io.StringIO()):
+                        scrape_visible_items(
+                            page,
+                            database,
+                            set(),
+                            Path("memories"),
+                            False,
+                            None,
+                            False,
+                            written,
+                        )
+                rows = database.execute("SELECT link FROM memories").fetchall()
+
+        self.assertEqual(written, [Path("memories/First.md")])
+        self.assertEqual(rows, [(link,)])
+        self.assertEqual(write_markdown.call_count, 1)
+        self.assertEqual(page.back_count, 2)
 
 
 if __name__ == "__main__":
