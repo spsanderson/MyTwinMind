@@ -297,7 +297,7 @@ record = MemoryRecord(
 | `open_memories` | `page`, `timeout_cls`, `debug: bool = False` | Navigate from the TwinMind app shell into the Memories list. | `open_memories(page, TimeoutError, debug=True)` |
 | `read_item_title` | `item`, `source_index: int` | Read a visible memory list item's title with selector fallbacks. | `title = read_item_title(item, 1)` |
 | `read_item_key` | `item`, `source_index: int` | Read a stable dedupe key from a visible memory item. | `key = read_item_key(item, 1)` |
-| `click_memory_item` | `item` | Click a visible memory item using nested target fallbacks. | `click_memory_item(item)` |
+| `click_memory_item` | `item`, `page` | Click a visible memory item using nested target fallbacks; returns the navigated detail URL. | `link = click_memory_item(item, page)` |
 | `click_memory_target` | `target` | Click a target, falling back to a DOM click when Playwright actionability fails. | `click_memory_target(item.locator("div").first)` |
 | `click_memory_date` | `button` | Click a date group button in the memory sidebar. | `click_memory_date(button)` |
 | `read_memory_date_key` | `button`, `source_index: int` | Read a dedupe key for a date group button. | `date_key = read_memory_date_key(button, 2)` |

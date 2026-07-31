@@ -8,12 +8,9 @@ from pathlib import Path
 from view_twinmind_logs import (
     decode_uploaded_filename,
     LogReadError,
-<<<<<<< ours
     LogViewerHandler,
     LogViewerServer,
-=======
     MAX_LOG_ROWS,
->>>>>>> theirs
     MAX_UPLOAD_BYTES,
     read_logs,
     read_uploaded_logs,
