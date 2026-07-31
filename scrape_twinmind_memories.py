@@ -34,9 +34,7 @@ GOOGLE_BUTTON_SELECTOR = "button.inline-flex:nth-child(1)"
 HAMBURGER_SELECTOR = ".lucide-menu"
 MEMORIES_BUTTON_SELECTOR = "div.r-1otgn73:nth-child(2)"
 MEMORY_LIST_SELECTOR = "div.size-full > div:nth-child(1) > ul:nth-child(1)"
-MEMORY_ITEM_SELECTOR = (
-    f"{MEMORY_LIST_SELECTOR} li.mb-4 > div:nth-child(2) > ul:nth-child(1) > li"
-)
+MEMORY_ITEM_SELECTOR = f"{MEMORY_LIST_SELECTOR} > li.mb-4"
 MEMORY_CLICK_TARGET_SELECTOR = "div:nth-child(1) > div:nth-child(2) > div:nth-child(1)"
 MEMORY_DATE_BUTTON_SELECTOR = (
     "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' size-full ')]"

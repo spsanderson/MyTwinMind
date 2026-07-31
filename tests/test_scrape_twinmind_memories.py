@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from scrape_twinmind_memories import (
     MEMORY_DATE_BUTTON_SELECTOR,
+    MEMORY_ITEM_SELECTOR,
     MEMORY_LIST_SELECTOR,
     MemoryRecord,
     build_manual_login_command,
@@ -94,6 +95,12 @@ class FakePage:
 
 
 class ScrapeTwinMindMemoriesTests(unittest.TestCase):
+    def test_memory_item_selector_targets_direct_list_items(self):
+        self.assertEqual(
+            MEMORY_ITEM_SELECTOR,
+            f"{MEMORY_LIST_SELECTOR} > li.mb-4",
+        )
+
     def test_date_button_selector_is_anchored_to_memory_list(self):
         self.assertIn("size-full", MEMORY_DATE_BUTTON_SELECTOR)
         self.assertIn("preceding::ul[li/button][1]", MEMORY_DATE_BUTTON_SELECTOR)
