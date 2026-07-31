@@ -14,6 +14,8 @@ from scrape_twinmind_memories import (
     ScraperLogger,
     build_manual_login_command,
     click_memory_target,
+    display_path,
+    is_memory_detail_url,
     open_log_database,
     open_memory_database,
     parse_args,
@@ -175,6 +177,13 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
             (output_dir / "Daily Standup.md").write_text("old", encoding="utf-8")
             path = unique_markdown_path(output_dir, "Daily Standup", 1, overwrite=True)
             self.assertEqual(path.name, "Daily Standup.md")
+
+    def test_display_path_returns_absolute_path(self):
+        self.assertTrue(Path(display_path(Path("memories.db"))).is_absolute())
+
+    def test_is_memory_detail_url_requires_memory_route(self):
+        self.assertTrue(is_memory_detail_url("https://app.twinmind.com/m/abc"))
+        self.assertFalse(is_memory_detail_url("https://app.twinmind.com/"))
 
     def test_render_markdown_contains_all_sections(self):
         record = MemoryRecord(
@@ -547,6 +556,50 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         self.assertEqual(rows, [(link,)])
         self.assertEqual(write_markdown.call_count, 1)
         self.assertEqual(page.back_count, 2)
+
+    def test_scrape_visible_items_skips_when_click_does_not_open_memory_detail(self):
+        page = FakeMemoryPage(
+            [
+                FakeMemoryItem("Home", "home-key", "https://app.twinmind.com/"),
+            ]
+        )
+        written = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with open_memory_database(Path(tmp) / "memories.db") as database:
+                with (
+                    patch(
+                        "scrape_twinmind_memories.click_memory_item",
+                        side_effect=page.open_memory,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_title",
+                        side_effect=lambda item, source_index: item.title,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_key",
+                        side_effect=lambda item, source_index: item.key,
+                    ),
+                    patch("scrape_twinmind_memories.copy_section_text") as copy_section,
+                ):
+                    with redirect_stderr(io.StringIO()):
+                        scrape_visible_items(
+                            page,
+                            database,
+                            set(),
+                            Path("memories"),
+                            False,
+                            None,
+                            False,
+                            written,
+                        )
+                rows = database.execute("SELECT link FROM memories").fetchall()
+
+        self.assertEqual(written, [])
+        self.assertEqual(rows, [])
+        copy_section.assert_not_called()
+        self.assertEqual(page.back_count, 0)
+        self.assertEqual(page.list_wait_count, 1)
 
 
 if __name__ == "__main__":
