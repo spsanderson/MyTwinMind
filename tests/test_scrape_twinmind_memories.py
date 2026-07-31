@@ -1,4 +1,5 @@
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -14,6 +15,8 @@ from scrape_twinmind_memories import (
     ScraperLogger,
     build_manual_login_command,
     click_memory_target,
+    display_path,
+    is_memory_detail_url,
     open_log_database,
     open_memory_database,
     parse_args,
@@ -24,6 +27,7 @@ from scrape_twinmind_memories import (
     sanitize_filename,
     scrape_date_groups,
     scrape_visible_items,
+    wait_for_memory_detail_url,
     wait_for_memory_list_change,
     unique_markdown_path,
     was_successfully_downloaded,
@@ -136,6 +140,11 @@ class FakeMemoryPage:
     def wait_for_timeout(self, timeout):
         self.waited.append(timeout)
 
+    def wait_for_url(self, predicate, timeout):
+        self.waited.append(("url", timeout))
+        if not predicate(self.url):
+            raise RuntimeError("memory detail URL not reached")
+
     def go_back(self, wait_until="domcontentloaded", timeout=5000):
         self.back_count += 1
         self.url = "https://app.twinmind.com"
@@ -175,6 +184,41 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
             (output_dir / "Daily Standup.md").write_text("old", encoding="utf-8")
             path = unique_markdown_path(output_dir, "Daily Standup", 1, overwrite=True)
             self.assertEqual(path.name, "Daily Standup.md")
+
+    def test_display_path_returns_absolute_path(self):
+        self.assertTrue(Path(display_path(Path("memories.db"))).is_absolute())
+
+    def test_database_paths_expand_user_before_opening(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                with open_memory_database(Path("~/state/memories.db")):
+                    pass
+                with open_log_database(Path("~/state/logs.db")):
+                    pass
+
+            self.assertTrue((home / "state" / "memories.db").is_file())
+            self.assertTrue((home / "state" / "logs.db").is_file())
+
+    def test_is_memory_detail_url_requires_memory_route(self):
+        self.assertTrue(is_memory_detail_url("https://app.twinmind.com/m/abc"))
+        self.assertFalse(is_memory_detail_url("https://app.twinmind.com/"))
+
+    def test_wait_for_memory_detail_url_allows_delayed_spa_navigation(self):
+        page = Mock()
+        page.url = "https://app.twinmind.com/"
+
+        def finish_navigation(predicate, timeout):
+            self.assertEqual(timeout, 10000)
+            page.url = "https://app.twinmind.com/m/delayed"
+            self.assertTrue(predicate(page.url))
+
+        page.wait_for_url.side_effect = finish_navigation
+
+        self.assertEqual(
+            wait_for_memory_detail_url(page),
+            "https://app.twinmind.com/m/delayed",
+        )
 
     def test_render_markdown_contains_all_sections(self):
         record = MemoryRecord(
@@ -547,6 +591,50 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         self.assertEqual(rows, [(link,)])
         self.assertEqual(write_markdown.call_count, 1)
         self.assertEqual(page.back_count, 2)
+
+    def test_scrape_visible_items_skips_when_click_does_not_open_memory_detail(self):
+        page = FakeMemoryPage(
+            [
+                FakeMemoryItem("Home", "home-key", "https://app.twinmind.com/"),
+            ]
+        )
+        written = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with open_memory_database(Path(tmp) / "memories.db") as database:
+                with (
+                    patch(
+                        "scrape_twinmind_memories.click_memory_item",
+                        side_effect=page.open_memory,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_title",
+                        side_effect=lambda item, source_index: item.title,
+                    ),
+                    patch(
+                        "scrape_twinmind_memories.read_item_key",
+                        side_effect=lambda item, source_index: item.key,
+                    ),
+                    patch("scrape_twinmind_memories.copy_section_text") as copy_section,
+                ):
+                    with redirect_stderr(io.StringIO()):
+                        scrape_visible_items(
+                            page,
+                            database,
+                            set(),
+                            Path("memories"),
+                            False,
+                            None,
+                            False,
+                            written,
+                        )
+                rows = database.execute("SELECT link FROM memories").fetchall()
+
+        self.assertEqual(written, [])
+        self.assertEqual(rows, [])
+        copy_section.assert_not_called()
+        self.assertEqual(page.back_count, 0)
+        self.assertEqual(page.list_wait_count, 1)
 
 
 if __name__ == "__main__":
