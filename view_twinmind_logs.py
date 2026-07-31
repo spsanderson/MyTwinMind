@@ -10,12 +10,13 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional, Sequence
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8767
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+MAX_LOG_ROWS = 1000
 
 
 HTML_PAGE = r"""<!doctype html>
@@ -511,7 +512,7 @@ HTML_PAGE = r"""<!doctype html>
         }
         const response = await fetch("/api/logs-file", {
           method: "POST",
-          headers: { "X-Filename": file.name },
+          headers: { "X-Filename": encodeURIComponent(file.name) },
           body: file,
         });
         const data = await response.json();
@@ -519,7 +520,10 @@ HTML_PAGE = r"""<!doctype html>
           throw new Error(data.error || "Unable to load database.");
         }
         rows = data.rows || [];
-        loadedPath.textContent = data.path || "";
+        const returned = Number(data.returned || 0);
+        const total = Number((data.summary || {}).total || 0);
+        const rowStatus = returned < total ? ` — showing newest ${returned.toLocaleString()} of ${total.toLocaleString()} rows` : "";
+        loadedPath.textContent = `${data.path || ""}${rowStatus}`;
         setSummary(data.summary || { total: 0, info: 0, warning: 0, debug: 0, other: 0 });
         renderRows();
       } catch (error) {
@@ -584,6 +588,10 @@ def validate_uploaded_logs(filename: str, content_length: int) -> None:
         raise LogReadError("Selected database file is larger than 100 MB.")
 
 
+def decode_uploaded_filename(filename: str) -> str:
+    return unquote(filename)
+
+
 def read_uploaded_logs(filename: str, content: bytes) -> dict[str, Any]:
     validate_uploaded_logs(filename, len(content))
     temp_path: Optional[Path] = None
@@ -623,13 +631,6 @@ def sqlite_read_only_uri(database_path: Path) -> str:
     return "file:" + quote(database_path.as_posix(), safe="/:") + "?mode=ro"
 
 
-def normalize_level(level: str) -> str:
-    normalized = level.lower()
-    if normalized in {"info", "warning", "debug"}:
-        return normalized
-    return "other"
-
-
 def read_logs(database_path: Path) -> dict[str, Any]:
     connection: Optional[sqlite3.Connection] = None
     try:
@@ -643,6 +644,27 @@ def read_logs(database_path: Path) -> dict[str, Any]:
         ).fetchone()
         if not has_table:
             raise LogReadError("This database does not contain a logs table.")
+        summary_row = connection.execute(
+            """
+            SELECT
+                COUNT(*),
+                SUM(CASE WHEN LOWER(level) = 'info' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN LOWER(level) = 'warning' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN LOWER(level) = 'debug' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN LOWER(level) NOT IN ('info', 'warning', 'debug')
+                    THEN 1 ELSE 0 END)
+            FROM logs
+            """
+        ).fetchone()
+        if summary_row is None:
+            raise LogReadError("Could not summarize the logs table.")
+        summary = {
+            "total": int(summary_row[0]),
+            "info": int(summary_row[1] or 0),
+            "warning": int(summary_row[2] or 0),
+            "debug": int(summary_row[3] or 0),
+            "other": int(summary_row[4] or 0),
+        }
         rows = [
             {
                 "id": int(id_value),
@@ -676,7 +698,9 @@ def read_logs(database_path: Path) -> dict[str, Any]:
                     details
                 FROM logs
                 ORDER BY id DESC
-                """
+                LIMIT ?
+                """,
+                (MAX_LOG_ROWS,),
             )
         ]
     except LogReadError:
@@ -687,12 +711,10 @@ def read_logs(database_path: Path) -> dict[str, Any]:
         if connection is not None:
             connection.close()
 
-    summary = {"total": len(rows), "info": 0, "warning": 0, "debug": 0, "other": 0}
-    for row in rows:
-        summary[normalize_level(row["level"])] += 1
     return {
         "path": str(database_path),
         "summary": summary,
+        "returned": len(rows),
         "rows": rows,
     }
 
@@ -707,35 +729,10 @@ class LogViewerHandler(BaseHTTPRequestHandler):
         self.send_text(HTTPStatus.OK, HTML_PAGE, "text/html; charset=utf-8")
 
     def do_POST(self) -> None:
-        if self.path == "/api/logs":
-            self.handle_path_logs()
-            return
         if self.path == "/api/logs-file":
             self.handle_file_logs()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
-
-    def handle_path_logs(self) -> None:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length)
-            payload = json.loads(body.decode("utf-8"))
-            if not isinstance(payload, dict):
-                raise LogReadError("Expected a JSON object.")
-            raw_path = payload.get("path")
-            if not isinstance(raw_path, str):
-                raise LogReadError("Expected path to be a string.")
-            database_path = resolve_database_path(raw_path, self.server.base_dir)
-            response = read_logs(database_path)
-        except json.JSONDecodeError:
-            self.send_json(
-                HTTPStatus.BAD_REQUEST, {"error": "Request body must be valid JSON."}
-            )
-            return
-        except LogReadError as exc:
-            self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
-            return
-        self.send_json(HTTPStatus.OK, response)
 
     def handle_file_logs(self) -> None:
         try:
@@ -757,7 +754,7 @@ class LogViewerHandler(BaseHTTPRequestHandler):
                 {"error": "Selected database file is larger than 100 MB."},
             )
             return
-        filename = self.headers.get("X-Filename", "")
+        filename = decode_uploaded_filename(self.headers.get("X-Filename", ""))
         try:
             response = read_uploaded_logs(filename, self.rfile.read(length))
         except LogReadError as exc:

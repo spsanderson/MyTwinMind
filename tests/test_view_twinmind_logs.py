@@ -1,10 +1,19 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
+from http.client import HTTPConnection
 from pathlib import Path
 
 from view_twinmind_logs import (
+    decode_uploaded_filename,
     LogReadError,
+<<<<<<< ours
+    LogViewerHandler,
+    LogViewerServer,
+=======
+    MAX_LOG_ROWS,
+>>>>>>> theirs
     MAX_UPLOAD_BYTES,
     read_logs,
     read_uploaded_logs,
@@ -122,6 +131,34 @@ class ViewTwinMindLogsTests(unittest.TestCase):
             self.assertEqual(logs["summary"]["total"], 4)
             self.assertEqual(logs["rows"][0]["event"], "custom")
 
+    def test_read_logs_returns_only_the_newest_bounded_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database_path = Path(tmp) / "logs.db"
+            self.create_logs(database_path)
+            database = sqlite3.connect(database_path)
+            try:
+                database.executemany(
+                    """
+                    INSERT INTO logs (created_at, level, event, message)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    [
+                        ("2026-07-31T12:00:00+00:00", "info", f"event-{index}", "message")
+                        for index in range(MAX_LOG_ROWS)
+                    ],
+                )
+                database.commit()
+            finally:
+                database.close()
+
+            logs = read_logs(database_path)
+
+            self.assertEqual(logs["summary"]["total"], MAX_LOG_ROWS + 4)
+            self.assertEqual(logs["returned"], MAX_LOG_ROWS)
+            self.assertEqual(len(logs["rows"]), MAX_LOG_ROWS)
+            self.assertEqual(logs["rows"][0]["event"], f"event-{MAX_LOG_ROWS - 1}")
+            self.assertNotIn("export_start", [row["event"] for row in logs["rows"]])
+
     def test_validate_uploaded_logs_rejects_missing_filename(self):
         with self.assertRaisesRegex(LogReadError, "missing a filename"):
             validate_uploaded_logs("", 1)
@@ -137,6 +174,9 @@ class ViewTwinMindLogsTests(unittest.TestCase):
     def test_validate_uploaded_logs_rejects_oversized_upload(self):
         with self.assertRaisesRegex(LogReadError, "larger than 100 MB"):
             validate_uploaded_logs("logs.db", MAX_UPLOAD_BYTES + 1)
+
+    def test_decode_uploaded_filename_supports_non_latin_characters(self):
+        self.assertEqual(decode_uploaded_filename("%E6%97%A5%E5%BF%97.db"), "日志.db")
 
     def test_read_uploaded_logs_rejects_invalid_sqlite_bytes(self):
         with self.assertRaisesRegex(LogReadError, "Could not read SQLite"):
@@ -204,6 +244,30 @@ class ViewTwinMindLogsTests(unittest.TestCase):
                 sqlite3.connect(sqlite_read_only_uri(missing_path), uri=True)
 
             self.assertFalse(missing_path.exists())
+
+    def test_path_based_logs_endpoint_is_not_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = LogViewerServer(
+                ("127.0.0.1", 0), LogViewerHandler, Path(tmp)
+            )
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            connection = HTTPConnection("127.0.0.1", server.server_port)
+            try:
+                connection.request(
+                    "POST",
+                    "/api/logs",
+                    body='{"path": "logs.db"}',
+                    headers={"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+
+                self.assertEqual(response.status, 404)
+            finally:
+                connection.close()
+                server.shutdown()
+                server.server_close()
+                thread.join()
 
 
 if __name__ == "__main__":
