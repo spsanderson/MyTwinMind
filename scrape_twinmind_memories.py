@@ -39,9 +39,9 @@ MEMORY_ITEM_SELECTOR = f"{MEMORY_LIST_SELECTOR} > li.mb-4"
 MEMORY_CLICK_TARGET_SELECTOR = "div:nth-child(1) > div:nth-child(2) > div:nth-child(1)"
 MEMORY_CLICK_SELECTORS = (
     MEMORY_CLICK_TARGET_SELECTOR,
+    "button",
     "a",
     "[role='button']",
-    "button",
 )
 MEMORY_DATE_BUTTON_SELECTOR = (
     "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' size-full ')]"

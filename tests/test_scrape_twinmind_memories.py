@@ -407,7 +407,7 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         def locate(selector):
             if selector == MEMORY_CLICK_TARGET_SELECTOR:
                 return Mock(first=first_target)
-            if selector == "a":
+            if selector == "button":
                 return Mock(first=second_target)
             return Mock(first=Mock())
 
