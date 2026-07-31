@@ -228,5 +228,11 @@ twinmind_memories.db
 twinmind_memories.db-journal
 twinmind_memories.db-shm
 twinmind_memories.db-wal
+
+# TwinMind scraper's local operational logs
+twinmind_logs.db
+twinmind_logs.db-journal
+twinmind_logs.db-shm
+twinmind_logs.db-wal
 /data
 data/

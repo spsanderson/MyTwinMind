@@ -27,6 +27,7 @@ DEFAULT_AUTH_STATE = Path(".auth") / "twinmind_state.json"
 DEFAULT_PROFILE_DIR = Path(".auth") / "twinmind_chrome_profile"
 DEFAULT_OUTPUT_DIR = Path("memories")
 DEFAULT_DATABASE_PATH = Path("twinmind_memories.db")
+DEFAULT_LOG_DATABASE_PATH = Path("twinmind_logs.db")
 DEFAULT_BROWSER_CHANNEL = "chrome"
 
 LOGIN_BUTTON_SELECTOR = r".bg-\[\#0b4f75\]"
@@ -55,6 +56,73 @@ class MemoryRecord:
     source_index: int
     scraped_at: str
     sections: Dict[str, str]
+
+
+@dataclass
+class ScraperLogger:
+    connection: sqlite3.Connection
+    debug: bool = False
+
+    def log(
+        self,
+        level: str,
+        event: str,
+        message: str,
+        memory_link: Optional[str] = None,
+        memory_title: Optional[str] = None,
+        details: Optional[str] = None,
+    ) -> None:
+        normalized = level.lower()
+        record_log(
+            self.connection,
+            normalized,
+            event,
+            message,
+            memory_link=memory_link,
+            memory_title=memory_title,
+            details=details,
+        )
+        if normalized == "debug" and not self.debug:
+            return
+        stream = sys.stderr if normalized in {"warning", "error"} else sys.stdout
+        print(f"[{normalized}] {message}", file=stream, flush=True)
+
+    def debug_log(self, event: str, message: str, details: Optional[str] = None) -> None:
+        self.log("debug", event, message, details=details)
+
+    def info(
+        self,
+        event: str,
+        message: str,
+        memory_link: Optional[str] = None,
+        memory_title: Optional[str] = None,
+        details: Optional[str] = None,
+    ) -> None:
+        self.log(
+            "info",
+            event,
+            message,
+            memory_link=memory_link,
+            memory_title=memory_title,
+            details=details,
+        )
+
+    def warning(
+        self,
+        event: str,
+        message: str,
+        memory_link: Optional[str] = None,
+        memory_title: Optional[str] = None,
+        details: Optional[str] = None,
+    ) -> None:
+        self.log(
+            "warning",
+            event,
+            message,
+            memory_link=memory_link,
+            memory_title=memory_title,
+            details=details,
+        )
 
 
 SECTIONS: Sequence[SectionSpec] = (
@@ -182,8 +250,65 @@ def record_download(
     connection.commit()
 
 
-def debug_log(enabled: bool, message: str) -> None:
-    if enabled:
+@contextmanager
+def open_log_database(database_path: Path) -> Iterator[sqlite3.Connection]:
+    """Open the operational log database and create its schema."""
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            level TEXT NOT NULL,
+            event TEXT NOT NULL,
+            message TEXT NOT NULL,
+            memory_link TEXT,
+            memory_title TEXT,
+            details TEXT
+        )
+        """
+    )
+    connection.commit()
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def record_log(
+    connection: sqlite3.Connection,
+    level: str,
+    event: str,
+    message: str,
+    memory_link: Optional[str] = None,
+    memory_title: Optional[str] = None,
+    details: Optional[str] = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO logs (
+            created_at,
+            level,
+            event,
+            message,
+            memory_link,
+            memory_title,
+            details
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (utc_timestamp(), level, event, message, memory_link, memory_title, details),
+    )
+    connection.commit()
+
+
+def debug_log(
+    enabled: bool, message: str, logger: Optional[ScraperLogger] = None, event: str = "debug"
+) -> None:
+    if logger:
+        logger.debug_log(event, message)
+    elif enabled:
         print(f"[debug] {message}", flush=True)
 
 
@@ -244,7 +369,9 @@ def quote_command(command: Sequence[str]) -> str:
     return " ".join(f'"{part}"' if " " in part else part for part in command)
 
 
-def save_login_state(profile_dir: Path, debug: bool = False) -> None:
+def save_login_state(
+    profile_dir: Path, debug: bool = False, logger: Optional[ScraperLogger] = None
+) -> None:
     chrome_executable = find_chrome_executable()
     if not chrome_executable:
         raise SystemExit(
@@ -255,18 +382,35 @@ def save_login_state(profile_dir: Path, debug: bool = False) -> None:
 
     profile_dir.mkdir(parents=True, exist_ok=True)
     command = build_manual_login_command(chrome_executable, profile_dir.resolve())
-    debug_log(debug, f"Launching manual Chrome login: {quote_command(command)}")
-    print("Opening a normal Chrome window with a dedicated TwinMind profile.", flush=True)
-    print("Complete the Google/TwinMind login there, then close that Chrome window.", flush=True)
-    print("After Chrome is fully closed, return here and press Enter.", flush=True)
+    debug_log(
+        debug,
+        f"Launching manual Chrome login: {quote_command(command)}",
+        logger,
+        event="login_launch",
+    )
+    messages = [
+        "Opening a normal Chrome window with a dedicated TwinMind profile.",
+        "Complete the Google/TwinMind login there, then close that Chrome window.",
+        "After Chrome is fully closed, return here and press Enter.",
+    ]
+    for message in messages:
+        if logger:
+            logger.info("login_instruction", message)
+        else:
+            print(message, flush=True)
     subprocess.Popen(command)
     input()
-    print(f"Manual Chrome profile is ready at {profile_dir}", flush=True)
-    print(
+    ready_message = f"Manual Chrome profile is ready at {profile_dir}"
+    locked_message = (
         "If scraping reports the profile is locked, close every Chrome window using "
-        "that profile and rerun the scrape command.",
-        flush=True,
+        "that profile and rerun the scrape command."
     )
+    if logger:
+        logger.info("login_profile_ready", ready_message)
+        logger.info("login_profile_note", locked_message)
+    else:
+        print(ready_message, flush=True)
+        print(locked_message, flush=True)
 
 
 def click_first_visible(locator, timeout_ms: int = 5000) -> bool:
@@ -305,23 +449,38 @@ def ensure_app_session(page, timeout_cls) -> None:
         ) from exc
 
 
-def click_if_present(page, selector: str, debug: bool, label: str) -> bool:
+def click_if_present(
+    page,
+    selector: str,
+    debug: bool,
+    label: str,
+    logger: Optional[ScraperLogger] = None,
+) -> bool:
     try:
         locator = page.locator(selector)
         if click_first_visible(locator, timeout_ms=3000):
-            debug_log(debug, f"Clicked {label}: {selector}")
+            debug_log(debug, f"Clicked {label}: {selector}", logger, event="click")
             return True
     except Exception as exc:
-        debug_log(debug, f"Did not click {label}: {exc}")
+        debug_log(debug, f"Did not click {label}: {exc}", logger, event="click_skipped")
     return False
 
 
-def open_memories(page, timeout_cls, debug: bool = False) -> None:
+def open_memories(
+    page,
+    timeout_cls,
+    debug: bool = False,
+    logger: Optional[ScraperLogger] = None,
+) -> None:
     ensure_app_session(page, timeout_cls)
     click_first_visible(page.locator(HAMBURGER_SELECTOR), timeout_ms=12000)
-    debug_log(debug, f"Clicked hamburger selector {HAMBURGER_SELECTOR}")
+    debug_log(
+        debug, f"Clicked hamburger selector {HAMBURGER_SELECTOR}", logger, event="navigation"
+    )
     click_first_visible(page.locator(MEMORIES_BUTTON_SELECTOR), timeout_ms=12000)
-    debug_log(debug, f"Clicked Memories selector {MEMORIES_BUTTON_SELECTOR}")
+    debug_log(
+        debug, f"Clicked Memories selector {MEMORIES_BUTTON_SELECTOR}", logger, event="navigation"
+    )
     page.locator(MEMORY_LIST_SELECTOR).first.wait_for(state="visible", timeout=15000)
 
 
@@ -472,14 +631,24 @@ def fallback_section_text(page, tab_selector: str, copy_selector: str) -> str:
     return page.evaluate(script, [tab_selector, copy_selector]).strip()
 
 
-def copy_section_text(page, section: SectionSpec, debug: bool = False) -> str:
+def copy_section_text(
+    page,
+    section: SectionSpec,
+    debug: bool = False,
+    logger: Optional[ScraperLogger] = None,
+) -> str:
     page.locator(section.tab_selector).first.click(timeout=8000)
     page.wait_for_timeout(500)
     stale = ""
     try:
         clear_clipboard(page)
     except Exception as exc:
-        debug_log(debug, f"Could not clear clipboard before {section.name}: {exc}")
+        debug_log(
+            debug,
+            f"Could not clear clipboard before {section.name}: {exc}",
+            logger,
+            event="clipboard_clear_failed",
+        )
         try:
             stale = read_clipboard(page)
         except Exception:
@@ -489,15 +658,35 @@ def copy_section_text(page, section: SectionSpec, debug: bool = False) -> str:
         page.wait_for_timeout(600)
         copied = read_clipboard(page).strip()
         if copied and copied != stale:
-            debug_log(debug, f"Copied {section.name} via clipboard ({len(copied)} chars).")
+            debug_log(
+                debug,
+                f"Copied {section.name} via clipboard ({len(copied)} chars).",
+                logger,
+                event="section_copied",
+            )
             return copied
         if copied and not stale:
             return copied
-        debug_log(debug, f"Clipboard was empty or stale for {section.name}; using fallback.")
+        debug_log(
+            debug,
+            f"Clipboard was empty or stale for {section.name}; using fallback.",
+            logger,
+            event="clipboard_fallback",
+        )
     except Exception as exc:
-        debug_log(debug, f"Clipboard copy failed for {section.name}: {exc}")
+        debug_log(
+            debug,
+            f"Clipboard copy failed for {section.name}: {exc}",
+            logger,
+            event="clipboard_copy_failed",
+        )
     fallback = fallback_section_text(page, section.tab_selector, section.copy_selector)
-    debug_log(debug, f"Fallback captured {section.name} ({len(fallback)} chars).")
+    debug_log(
+        debug,
+        f"Fallback captured {section.name} ({len(fallback)} chars).",
+        logger,
+        event="section_fallback_captured",
+    )
     return fallback
 
 
@@ -510,10 +699,14 @@ def scrape_visible_items(
     limit: Optional[int],
     debug: bool,
     written: List[Path],
+    logger: Optional[ScraperLogger] = None,
 ) -> None:
     item_locator = page.locator(MEMORY_ITEM_SELECTOR)
     count = item_locator.count()
-    debug_log(debug, f"Found {count} visible memory candidates.")
+    if logger:
+        logger.info("visible_candidates", f"Found {count} visible memory candidates.")
+    else:
+        debug_log(debug, f"Found {count} visible memory candidates.")
     for visible_index in range(count):
         if limit is not None and len(written) >= limit:
             return
@@ -530,13 +723,23 @@ def scrape_visible_items(
             page.wait_for_timeout(1000)
             link = page.url
             if not overwrite and was_successfully_downloaded(database, link):
-                debug_log(debug, f"Already downloaded; skipping {link}")
+                message = f"Already downloaded; skipping {link}"
+                if logger:
+                    logger.info(
+                        "memory_skip_downloaded",
+                        message,
+                        memory_link=link,
+                        memory_title=title,
+                    )
+                else:
+                    debug_log(debug, message)
                 continue
             # Record the attempt before extraction so interrupted and failed runs
             # remain eligible to retry next time.
             record_download(database, link, title, successful=False)
             sections = {
-                section.name: copy_section_text(page, section, debug) for section in SECTIONS
+                section.name: copy_section_text(page, section, debug, logger)
+                for section in SECTIONS
             }
             record = MemoryRecord(
                 title=title,
@@ -547,14 +750,34 @@ def scrape_visible_items(
             path = write_memory_markdown(record, output_dir, overwrite=overwrite)
             record_download(database, link, title, successful=True)
             written.append(path)
-            print(f"Wrote {path}", flush=True)
+            message = f"Wrote {path}"
+            if logger:
+                logger.info(
+                    "memory_written",
+                    message,
+                    memory_link=link,
+                    memory_title=title,
+                )
+            else:
+                print(message, flush=True)
         except Exception as exc:
             if link:
                 record_download(database, link, title, successful=False)
-            print(f"Skipped memory {source_index} ({title!r}): {exc}", file=sys.stderr)
+            message = f"Skipped memory {source_index} ({title!r}): {exc}"
+            if logger:
+                logger.warning(
+                    "memory_skipped",
+                    message,
+                    memory_link=link or None,
+                    memory_title=title,
+                )
+            else:
+                print(message, file=sys.stderr)
 
 
-def scroll_memory_list(page, debug: bool = False) -> bool:
+def scroll_memory_list(
+    page, debug: bool = False, logger: Optional[ScraperLogger] = None
+) -> bool:
     script = """
     (selector) => {
       const list = document.querySelector(selector);
@@ -573,7 +796,7 @@ def scroll_memory_list(page, debug: bool = False) -> bool:
     }
     """
     result = page.evaluate(script, MEMORY_LIST_SELECTOR)
-    debug_log(debug, f"Scroll result: {result}")
+    debug_log(debug, f"Scroll result: {result}", logger, event="scroll")
     if result.get("moved"):
         page.wait_for_timeout(900)
         return True
@@ -582,7 +805,9 @@ def scroll_memory_list(page, debug: bool = False) -> bool:
     return False
 
 
-def reset_memory_list_scroll(page, debug: bool = False) -> None:
+def reset_memory_list_scroll(
+    page, debug: bool = False, logger: Optional[ScraperLogger] = None
+) -> None:
     script = """
     (selector) => {
       const list = document.querySelector(selector);
@@ -593,9 +818,19 @@ def reset_memory_list_scroll(page, debug: bool = False) -> None:
     """
     try:
         did_reset = page.evaluate(script, MEMORY_LIST_SELECTOR)
-        debug_log(debug, f"Reset memory list scroll: {did_reset}")
+        debug_log(
+            debug,
+            f"Reset memory list scroll: {did_reset}",
+            logger,
+            event="scroll_reset",
+        )
     except Exception as exc:
-        debug_log(debug, f"Could not reset memory list scroll: {exc}")
+        debug_log(
+            debug,
+            f"Could not reset memory list scroll: {exc}",
+            logger,
+            event="scroll_reset_failed",
+        )
 
 
 def scrape_current_memory_list(
@@ -607,16 +842,22 @@ def scrape_current_memory_list(
     limit: Optional[int],
     debug: bool,
     written: List[Path],
+    logger: Optional[ScraperLogger] = None,
 ) -> None:
     stagnant_rounds = 0
     while limit is None or len(written) < limit:
         before_seen = len(seen)
-        scrape_visible_items(
-            page, database, seen, output_dir, overwrite, limit, debug, written
-        )
+        if logger:
+            scrape_visible_items(
+                page, database, seen, output_dir, overwrite, limit, debug, written, logger
+            )
+        else:
+            scrape_visible_items(
+                page, database, seen, output_dir, overwrite, limit, debug, written
+            )
         if limit is not None and len(written) >= limit:
             break
-        moved = scroll_memory_list(page, debug)
+        moved = scroll_memory_list(page, debug, logger)
         if len(seen) == before_seen:
             stagnant_rounds += 1
         else:
@@ -634,15 +875,26 @@ def scrape_date_groups(
     limit: Optional[int],
     debug: bool,
     written: List[Path],
+    logger: Optional[ScraperLogger] = None,
 ) -> None:
     date_locator = page.locator(MEMORY_DATE_BUTTON_SELECTOR)
     try:
         date_locator.first.wait_for(state="visible", timeout=3000)
     except Exception as exc:
-        debug_log(debug, f"Memory date list not found; scraping current list only: {exc}")
-        scrape_current_memory_list(
-            page, database, seen, output_dir, overwrite, limit, debug, written
+        debug_log(
+            debug,
+            f"Memory date list not found; scraping current list only: {exc}",
+            logger,
+            event="date_list_missing",
         )
+        if logger:
+            scrape_current_memory_list(
+                page, database, seen, output_dir, overwrite, limit, debug, written, logger
+            )
+        else:
+            scrape_current_memory_list(
+                page, database, seen, output_dir, overwrite, limit, debug, written
+            )
         return
 
     visited_dates: Set[str] = set()
@@ -656,14 +908,24 @@ def scrape_date_groups(
         date_key = read_memory_date_key(button, date_index + 1)
         date_index += 1
         if date_key in visited_dates:
-            debug_log(debug, f"Skipping already visited memory date {date_key!r}.")
+            debug_log(
+                debug,
+                f"Skipping already visited memory date {date_key!r}.",
+                logger,
+                event="date_skip_duplicate",
+            )
             continue
         visited_dates.add(date_key)
         try:
             was_selected = memory_date_is_selected(button)
             previous_content = memory_list_content(page)
             click_memory_date(button)
-            debug_log(debug, f"Clicked memory date {date_key!r}.")
+            debug_log(
+                debug,
+                f"Clicked memory date {date_key!r}.",
+                logger,
+                event="date_clicked",
+            )
             if not was_selected:
                 try:
                     wait_for_memory_list_change(page, previous_content)
@@ -672,18 +934,38 @@ def scrape_date_groups(
                         debug,
                         f"Memory date {date_key!r} did not change after click; "
                         f"scraping visible list: {exc}",
+                        logger,
+                        event="date_list_unchanged",
                     )
             page.locator(MEMORY_LIST_SELECTOR).first.wait_for(
                 state="visible", timeout=10000
             )
-            reset_memory_list_scroll(page, debug)
+            reset_memory_list_scroll(page, debug, logger)
         except Exception as exc:
-            debug_log(debug, f"Skipped memory date {date_key!r}: {exc}")
+            debug_log(
+                debug,
+                f"Skipped memory date {date_key!r}: {exc}",
+                logger,
+                event="date_skipped",
+            )
             continue
         date_seen: Set[str] = set()
-        scrape_current_memory_list(
-            page, database, date_seen, output_dir, overwrite, limit, debug, written
-        )
+        if logger:
+            scrape_current_memory_list(
+                page,
+                database,
+                date_seen,
+                output_dir,
+                overwrite,
+                limit,
+                debug,
+                written,
+                logger,
+            )
+        else:
+            scrape_current_memory_list(
+                page, database, date_seen, output_dir, overwrite, limit, debug, written
+            )
 
 
 def scrape_memories(
@@ -695,28 +977,47 @@ def scrape_memories(
     debug: bool,
     browser_channel: str,
     database_path: Path = DEFAULT_DATABASE_PATH,
+    log_database_path: Path = DEFAULT_LOG_DATABASE_PATH,
 ) -> List[Path]:
-    if not profile_dir.exists():
-        raise SystemExit(
-            f"Missing Chrome profile at {profile_dir}. Run "
-            "`python scrape_twinmind_memories.py --login` first."
-        )
-    _, TimeoutError, sync_playwright = import_playwright()
     written: List[Path] = []
     seen: Set[str] = set()
-    with open_memory_database(database_path) as database, sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            channel=browser_channel,
-            headless=headless,
+    with open_log_database(log_database_path) as log_database:
+        logger = ScraperLogger(log_database, debug=debug)
+        logger.info("export_start", f"Starting TwinMind export to {output_dir}")
+        if not profile_dir.exists():
+            message = (
+                f"Missing Chrome profile at {profile_dir}. Run "
+                "`python scrape_twinmind_memories.py --login` first."
+            )
+            logger.warning("missing_profile", message)
+raise SystemExit(1)
+        _, TimeoutError, sync_playwright = import_playwright()
+        with open_memory_database(database_path) as database, sync_playwright() as playwright:
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel=browser_channel,
+                headless=headless,
+            )
+            context.grant_permissions(
+                ["clipboard-read", "clipboard-write"], origin=APP_ORIGIN
+            )
+            page = context.pages[0] if context.pages else context.new_page()
+            open_memories(page, TimeoutError, debug, logger)
+            scrape_date_groups(
+                page,
+                database,
+                seen,
+                output_dir,
+                overwrite,
+                limit,
+                debug,
+                written,
+                logger,
+            )
+            context.close()
+        logger.info(
+            "export_complete", f"Exported {len(written)} TwinMind memories to {output_dir}"
         )
-        context.grant_permissions(["clipboard-read", "clipboard-write"], origin=APP_ORIGIN)
-        page = context.pages[0] if context.pages else context.new_page()
-        open_memories(page, TimeoutError, debug)
-        scrape_date_groups(
-            page, database, seen, output_dir, overwrite, limit, debug, written
-        )
-        context.close()
     return written
 
 
@@ -752,6 +1053,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=DEFAULT_DATABASE_PATH,
         help=f"SQLite download ledger. Default: {DEFAULT_DATABASE_PATH}",
     )
+    parser.add_argument(
+        "--log-database",
+        type=Path,
+        default=DEFAULT_LOG_DATABASE_PATH,
+        help=f"SQLite operational log database. Default: {DEFAULT_LOG_DATABASE_PATH}",
+    )
     parser.add_argument("--limit", type=int, help="Export at most N memories.")
     parser.add_argument("--headless", action="store_true", help="Run export browser headlessly.")
     parser.add_argument(
@@ -768,7 +1075,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.limit is not None and args.limit < 1:
         raise SystemExit("--limit must be a positive integer.")
     if args.login:
-        save_login_state(args.profile_dir, debug=args.debug)
+        with open_log_database(args.log_database) as log_database:
+            logger = ScraperLogger(log_database, debug=args.debug)
+            save_login_state(args.profile_dir, debug=args.debug, logger=logger)
         return 0
     written = scrape_memories(
         profile_dir=args.profile_dir,
@@ -779,8 +1088,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         debug=args.debug,
         browser_channel=args.browser_channel,
         database_path=args.database,
+        log_database_path=args.log_database,
     )
-    print(f"Exported {len(written)} TwinMind memories to {args.output}")
     return 0
 
 

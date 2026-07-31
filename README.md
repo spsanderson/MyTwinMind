@@ -63,8 +63,9 @@ retry. Use `--database PATH` to put the ledger elsewhere:
 python scrape_twinmind_memories.py --output memories --database ..\twinmind-private\memories.db
 ```
 
-If you use a custom `--output` directory or `--database` path, keep it outside
-tracked source paths or add it to `.gitignore` before exporting private data.
+If you use a custom `--output` directory, `--database` path, or `--log-database`
+path, keep it outside tracked source paths or add it to `.gitignore` before
+exporting private data.
 
 View a SQLite ledger in a local read-only browser UI:
 
@@ -142,6 +143,7 @@ Arguments:
 | `--browser-channel NAME` | text | `chrome` | Choose the Playwright browser channel used for scraping. |
 | `--output PATH` | path | `memories` | Choose where Markdown exports are written. |
 | `--database PATH` | path | `twinmind_memories.db` | Choose the SQLite download ledger path. |
+| `--log-database PATH` | path | `twinmind_logs.db` | Choose the SQLite operational log database path. |
 | `--limit N` | integer | no limit | Export at most `N` memories. Must be positive. |
 | `--headless` | flag | off | Run the export browser headlessly after login is already saved. |
 | `--overwrite` | flag | off | Reuse an existing Markdown filename for the same sanitized title. |
@@ -155,6 +157,7 @@ python scrape_twinmind_memories.py --login --profile-dir .auth\twinmind_chrome_p
 python scrape_twinmind_memories.py --limit 1 --debug
 python scrape_twinmind_memories.py --output memories
 python scrape_twinmind_memories.py --output ..\twinmind-private\exports --database ..\twinmind-private\memories.db
+python scrape_twinmind_memories.py --output ..\twinmind-private\exports --log-database ..\twinmind-private\logs.db
 python scrape_twinmind_memories.py --limit 10 --headless
 python scrape_twinmind_memories.py --output memories --overwrite
 python scrape_twinmind_memories.py --browser-channel chrome --profile-dir .auth\twinmind_chrome_profile
@@ -242,7 +245,10 @@ record = MemoryRecord(
 | `open_memory_database` | `database_path: Path` | Open the SQLite ledger as a context manager and create its schema. | `with open_memory_database(Path("twinmind_memories.db")) as db: ...` |
 | `was_successfully_downloaded` | `connection: sqlite3.Connection`, `link: str` | Check whether a memory link already has a successful ledger entry. | `was_successfully_downloaded(db, "https://app.twinmind.com/memory/123")` |
 | `record_download` | `connection: sqlite3.Connection`, `link: str`, `title: str`, `successful: bool` | Record a failed or successful attempt without downgrading prior successes. | `record_download(db, link, title, successful=True)` |
-| `debug_log` | `enabled: bool`, `message: str` | Print a flushed debug message only when debugging is enabled. | `debug_log(True, "Copied Summary")` |
+| `open_log_database` | `database_path: Path` | Open the SQLite operational log database as a context manager and create its schema. | `with open_log_database(Path("twinmind_logs.db")) as db: ...` |
+| `record_log` | `connection: sqlite3.Connection`, `level: str`, `event: str`, `message: str`, optional memory fields | Record one operational log event. | `record_log(db, "info", "memory_written", "Wrote memory.md")` |
+| `ScraperLogger` | `connection: sqlite3.Connection`, `debug: bool = False` | Write operational logs to SQLite and print terminal logs. | `logger = ScraperLogger(db, debug=True)` |
+| `debug_log` | `enabled: bool`, `message: str`, `logger: Optional[ScraperLogger] = None`, `event: str = "debug"` | Print a flushed debug message only when debugging is enabled, optionally persisting it to the operational log database. | `debug_log(True, "Copied Summary", logger=logger, event="clipboard")` |
 | `import_playwright` | none | Import Playwright lazily and show setup guidance if it is missing. | `Error, TimeoutError, sync_playwright = import_playwright()` |
 | `windows_chrome_candidates` | none | Build common Windows Chrome executable paths. | `candidates = windows_chrome_candidates()` |
 | `find_chrome_executable` | `platform: Optional[str] = None` | Find Google Chrome for manual login on Windows, macOS, or Linux. | `chrome = find_chrome_executable()` |
@@ -278,6 +284,6 @@ record = MemoryRecord(
 | `reset_memory_list_scroll` | `page`, `debug: bool = False` | Reset the memory list scroll position to the top. | `reset_memory_list_scroll(page, debug=True)` |
 | `scrape_current_memory_list` | `page`, `database`, `seen`, `output_dir`, `overwrite`, `limit`, `debug`, `written` | Keep scraping and scrolling one date group's current memory list. | `scrape_current_memory_list(page, db, set(), Path("memories"), False, 5, True, [])` |
 | `scrape_date_groups` | `page`, `database`, `seen`, `output_dir`, `overwrite`, `limit`, `debug`, `written` | Traverse visible date groups and scrape each memory list, with current-list fallback. | `scrape_date_groups(page, db, set(), Path("memories"), False, None, True, [])` |
-| `scrape_memories` | `profile_dir: Path`, `output_dir: Path`, `limit: Optional[int]`, `headless: bool`, `overwrite: bool`, `debug: bool`, `browser_channel: str`, `database_path: Path = DEFAULT_DATABASE_PATH` | Run the full authenticated export flow and return written Markdown paths. | `scrape_memories(Path(".auth/twinmind_chrome_profile"), Path("memories"), 1, False, False, True, "chrome")` |
+| `scrape_memories` | `profile_dir: Path`, `output_dir: Path`, `limit: Optional[int]`, `headless: bool`, `overwrite: bool`, `debug: bool`, `browser_channel: str`, `database_path: Path = DEFAULT_DATABASE_PATH`, `log_database_path: Path = DEFAULT_LOG_DATABASE_PATH` | Run the full authenticated export flow and return written Markdown paths. | `scrape_memories(Path(".auth/twinmind_chrome_profile"), Path("memories"), 1, False, False, True, "chrome")` |
 | `parse_args` | `argv: Optional[Sequence[str]] = None` | Parse scraper CLI arguments. | `parse_args(["--limit", "1", "--debug"])` |
 | `main` | `argv: Optional[Sequence[str]] = None` | Run login or export from Python and return an exit code. | `raise SystemExit(main(["--limit", "1", "--debug"]))` |

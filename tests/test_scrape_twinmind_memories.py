@@ -1,17 +1,24 @@
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from scrape_twinmind_memories import (
+    DEFAULT_LOG_DATABASE_PATH,
     MEMORY_DATE_BUTTON_SELECTOR,
     MEMORY_ITEM_SELECTOR,
     MEMORY_LIST_SELECTOR,
     MemoryRecord,
+    ScraperLogger,
     build_manual_login_command,
-    open_memory_database,
     click_memory_target,
+    open_log_database,
+    open_memory_database,
+    parse_args,
     quote_command,
+    record_log,
     record_download,
     render_markdown,
     sanitize_filename,
@@ -202,6 +209,89 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
                 record_download(database, link, "Done", True)
                 record_download(database, link, "Done", False)
                 self.assertTrue(was_successfully_downloaded(database, link))
+
+    def test_log_database_records_operational_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database_path = Path(tmp) / "state" / "logs.db"
+            with open_log_database(database_path) as database:
+                record_log(
+                    database,
+                    "info",
+                    "memory_written",
+                    "Wrote memory.md",
+                    memory_link="https://example.test/memory/1",
+                    memory_title="Daily Standup",
+                    details="path=memory.md",
+                )
+                row = database.execute(
+                    """
+                    SELECT level, event, message, memory_link, memory_title, details
+                    FROM logs
+                    """
+                ).fetchone()
+
+            self.assertEqual(
+                row,
+                (
+                    "info",
+                    "memory_written",
+                    "Wrote memory.md",
+                    "https://example.test/memory/1",
+                    "Daily Standup",
+                    "path=memory.md",
+                ),
+            )
+
+    def test_logger_prints_info_to_stdout_and_persists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+            with open_log_database(Path(tmp) / "logs.db") as database:
+                logger = ScraperLogger(database, debug=False)
+                with redirect_stdout(stdout):
+                    logger.info("export_start", "Starting export")
+                row = database.execute("SELECT level, event, message FROM logs").fetchone()
+
+            self.assertIn("[info] Starting export", stdout.getvalue())
+            self.assertEqual(row, ("info", "export_start", "Starting export"))
+
+    def test_logger_suppresses_debug_stdout_unless_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+            with open_log_database(Path(tmp) / "logs.db") as database:
+                logger = ScraperLogger(database, debug=False)
+                with redirect_stdout(stdout):
+                    logger.debug_log("selector", "Clicked selector")
+                row = database.execute("SELECT level, event, message FROM logs").fetchone()
+
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(row, ("debug", "selector", "Clicked selector"))
+
+    def test_logger_prints_debug_stdout_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+            with open_log_database(Path(tmp) / "logs.db") as database:
+                logger = ScraperLogger(database, debug=True)
+                with redirect_stdout(stdout):
+                    logger.debug_log("selector", "Clicked selector")
+
+            self.assertIn("[debug] Clicked selector", stdout.getvalue())
+
+    def test_logger_prints_warning_to_stderr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr = io.StringIO()
+            with open_log_database(Path(tmp) / "logs.db") as database:
+                logger = ScraperLogger(database, debug=False)
+                with redirect_stderr(stderr):
+                    logger.warning("memory_skipped", "Skipped memory 1")
+
+            self.assertIn("[warning] Skipped memory 1", stderr.getvalue())
+
+    def test_parse_args_supports_log_database_default_and_override(self):
+        default_args = parse_args([])
+        override_args = parse_args(["--log-database", "data/logs.db"])
+
+        self.assertEqual(default_args.log_database, DEFAULT_LOG_DATABASE_PATH)
+        self.assertEqual(override_args.log_database, Path("data/logs.db"))
 
     def test_click_memory_target_uses_normal_playwright_click(self):
         target = Mock()
