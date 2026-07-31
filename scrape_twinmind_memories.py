@@ -553,6 +553,27 @@ def click_memory_date(button) -> None:
     click_memory_target(button)
 
 
+def _restore_memory_list(page, debug: bool = False, logger: Optional[ScraperLogger] = None) -> None:
+    """Return from an opened memory detail view to the memories list."""
+    if "/m/" in page.url:
+        try:
+            page.go_back(wait_until="domcontentloaded", timeout=5000)
+            debug_log(
+                debug,
+                "Returned to the memories list after opening a memory.",
+                logger,
+                event="navigation_back",
+            )
+        except Exception as exc:
+            debug_log(
+                debug,
+                f"Could not navigate back after opening a memory: {exc}",
+                logger,
+                event="navigation_back_failed",
+            )
+    page.locator(MEMORY_LIST_SELECTOR).first.wait_for(state="visible", timeout=10000)
+
+
 def read_memory_date_key(button, source_index: int) -> str:
     try:
         text = compact_text(button.inner_text(timeout=1000))
@@ -707,6 +728,7 @@ def scrape_visible_items(
         logger.info("visible_candidates", f"Found {count} visible memory candidates.")
     else:
         debug_log(debug, f"Found {count} visible memory candidates.")
+    opened_links: Set[str] = set()
     for visible_index in range(count):
         if limit is not None and len(written) >= limit:
             return
@@ -722,6 +744,19 @@ def scrape_visible_items(
             click_memory_item(item)
             page.wait_for_timeout(1000)
             link = page.url
+            if link in opened_links:
+                message = f"Already visited in this list; skipping {link}"
+                if logger:
+                    logger.info(
+                        "memory_skip_duplicate_link",
+                        message,
+                        memory_link=link,
+                        memory_title=title,
+                    )
+                else:
+                    debug_log(debug, message)
+                continue
+            opened_links.add(link)
             if not overwrite and was_successfully_downloaded(database, link):
                 message = f"Already downloaded; skipping {link}"
                 if logger:
@@ -773,6 +808,9 @@ def scrape_visible_items(
                 )
             else:
                 print(message, file=sys.stderr)
+        finally:
+            if link:
+                _restore_memory_list(page, debug, logger)
 
 
 def scroll_memory_list(
