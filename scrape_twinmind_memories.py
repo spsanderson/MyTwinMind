@@ -42,8 +42,6 @@ MEMORY_CLICK_SELECTORS = (
     "button",
     "a",
     "[role='button']",
-    "div[role='button']",
-    "div",
 )
 MEMORY_DATE_BUTTON_SELECTOR = (
     "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' size-full ')]"
