@@ -528,7 +528,7 @@ def read_item_key(item, source_index: int) -> str:
 
 
 def is_memory_detail_url(url: str) -> bool:
-    return url.startswith(f"{APP_ORIGIN}/m/")
+    return url.startswith(APP_ORIGIN) and "/m/" in url
 
 
 def click_memory_item(item) -> None:
