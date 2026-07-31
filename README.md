@@ -63,8 +63,9 @@ retry. Use `--database PATH` to put the ledger elsewhere:
 python scrape_twinmind_memories.py --output memories --database ..\twinmind-private\memories.db
 ```
 
-If you use a custom `--output` directory or `--database` path, keep it outside
-tracked source paths or add it to `.gitignore` before exporting private data.
+If you use a custom `--output` directory, `--database` path, or `--log-database`
+path, keep it outside tracked source paths or add it to `.gitignore` before
+exporting private data.
 
 View a SQLite ledger in a local read-only browser UI:
 
