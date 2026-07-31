@@ -134,8 +134,9 @@ class FakeMemoryPage:
             return ListLocator()
         return FakeLocator()
 
-    def open_memory(self, item):
+    def open_memory(self, item, page=None):
         self.url = item.link
+        return self.url
 
     def wait_for_timeout(self, timeout):
         self.waited.append(timeout)
@@ -393,6 +394,42 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
 
         target.evaluate.assert_called_once_with("element => element.click()")
 
+<<<<<<< ours
+=======
+    def test_click_memory_item_tries_fallback_selectors_until_navigation_succeeds(self):
+        first_target = Mock()
+        first_target.is_visible.return_value = True
+        second_target = Mock()
+        second_target.is_visible.return_value = True
+        item = Mock()
+        page = Mock()
+
+        def locate(selector):
+            if selector == MEMORY_CLICK_TARGET_SELECTOR:
+                return Mock(first=first_target)
+            if selector == "a":
+                return Mock(first=second_target)
+            return Mock(first=Mock())
+
+        item.locator.side_effect = locate
+
+        with (
+            patch("scrape_twinmind_memories.click_memory_target") as click_target,
+            patch(
+                "scrape_twinmind_memories.wait_for_memory_detail_url",
+                side_effect=[RuntimeError("not opened"), "https://app.twinmind.com/m/1"],
+            ) as wait_for_detail,
+        ):
+            link = click_memory_item(item, page)
+
+        self.assertEqual(link, "https://app.twinmind.com/m/1")
+        self.assertEqual(
+            click_target.call_args_list,
+            [unittest.mock.call(first_target), unittest.mock.call(second_target)],
+        )
+        self.assertEqual(wait_for_detail.call_count, 2)
+
+>>>>>>> theirs
     def test_scrape_date_groups_clicks_each_date_and_delegates_scraping(self):
         buttons = [FakeButton("Today", selected=True), FakeButton("Yesterday")]
         page = FakePage(buttons)

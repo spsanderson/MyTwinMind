@@ -37,6 +37,15 @@ MEMORIES_BUTTON_SELECTOR = "div.r-1otgn73:nth-child(2)"
 MEMORY_LIST_SELECTOR = "div.size-full > div:nth-child(1) > ul:nth-child(1)"
 MEMORY_ITEM_SELECTOR = f"{MEMORY_LIST_SELECTOR} > li.mb-4"
 MEMORY_CLICK_TARGET_SELECTOR = "div:nth-child(1) > div:nth-child(2) > div:nth-child(1)"
+<<<<<<< ours
+=======
+MEMORY_CLICK_SELECTORS = (
+    MEMORY_CLICK_TARGET_SELECTOR,
+    "a",
+    "[role='button']",
+    "button",
+)
+>>>>>>> theirs
 MEMORY_DATE_BUTTON_SELECTOR = (
     "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' size-full ')]"
     "/div[1]/ul[1]/preceding::ul[li/button][1]/li/button"
@@ -553,16 +562,22 @@ def wait_for_memory_detail_url(page, timeout_ms: int = 10000) -> str:
     return page.url
 
 
+<<<<<<< ours
 def click_memory_item(item) -> None:
     for selector in (MEMORY_CLICK_TARGET_SELECTOR, "[role='button']", "div"):
+=======
+def click_memory_item(item, page) -> str:
+    for selector in MEMORY_CLICK_SELECTORS:
+>>>>>>> theirs
         target = item.locator(selector).first
         try:
             if target.is_visible(timeout=500):
                 click_memory_target(target)
-                return
+                return wait_for_memory_detail_url(page, timeout_ms=2000)
         except Exception:
             continue
     click_memory_target(item)
+    return wait_for_memory_detail_url(page)
 
 
 def click_memory_target(target) -> None:
@@ -772,8 +787,7 @@ def scrape_visible_items(
         source_index = len(seen)
         link = ""
         try:
-            click_memory_item(item)
-            link = wait_for_memory_detail_url(page)
+            link = click_memory_item(item, page)
             if not is_memory_detail_url(link):
                 message = f"Skipped memory {source_index} ({title!r}): click did not open a memory detail page ({link})"
                 if logger:
