@@ -247,7 +247,7 @@ record = MemoryRecord(
 | `open_log_database` | `database_path: Path` | Open the SQLite operational log database as a context manager and create its schema. | `with open_log_database(Path("twinmind_logs.db")) as db: ...` |
 | `record_log` | `connection: sqlite3.Connection`, `level: str`, `event: str`, `message: str`, optional memory fields | Record one operational log event. | `record_log(db, "info", "memory_written", "Wrote memory.md")` |
 | `ScraperLogger` | `connection: sqlite3.Connection`, `debug: bool = False` | Write operational logs to SQLite and print terminal logs. | `logger = ScraperLogger(db, debug=True)` |
-| `debug_log` | `enabled: bool`, `message: str` | Print a flushed debug message only when debugging is enabled. | `debug_log(True, "Copied Summary")` |
+| `debug_log` | `enabled: bool`, `message: str`, `logger: Optional[ScraperLogger] = None`, `event: str = "debug"` | Print a flushed debug message only when debugging is enabled, optionally persisting it to the operational log database. | `debug_log(True, "Copied Summary", logger=logger, event="clipboard")` |
 | `import_playwright` | none | Import Playwright lazily and show setup guidance if it is missing. | `Error, TimeoutError, sync_playwright = import_playwright()` |
 | `windows_chrome_candidates` | none | Build common Windows Chrome executable paths. | `candidates = windows_chrome_candidates()` |
 | `find_chrome_executable` | `platform: Optional[str] = None` | Find Google Chrome for manual login on Windows, macOS, or Linux. | `chrome = find_chrome_executable()` |
