@@ -560,6 +560,22 @@ def wait_for_memory_detail_url(page, timeout_ms: int = 10000) -> str:
 
 
 def click_memory_item(item, page) -> str:
+    """Click a memory list item and return the navigated detail URL.
+
+    Tries each selector in ``MEMORY_CLICK_SELECTORS`` in order. When a visible
+    target is found, clicks it and waits briefly for SPA navigation. If the
+    resulting URL is a memory detail URL it is returned immediately; otherwise
+    the next selector is tried. If no nested selector navigates successfully the
+    item itself is clicked and the final URL is returned.
+
+    Args:
+        item: Playwright ``Locator`` for the memory list row.
+        page: Playwright ``Page`` used to detect the post-click URL.
+
+    Returns:
+        The page URL after the click. Callers should check
+        ``is_memory_detail_url(url)`` to confirm navigation succeeded.
+    """
     for selector in MEMORY_CLICK_SELECTORS:
         target = item.locator(selector).first
         try:
