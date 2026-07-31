@@ -208,6 +208,11 @@ def display_path(path: Path) -> str:
 
 def _resolved_path(path: Path) -> Path:
     """Normalize a local path consistently for display and file access."""
+    path_text = str(path)
+    if path_text == "~" or path_text.startswith(("~/", "~\\")):
+        home = os.environ.get("HOME")
+        if home:
+            path = Path(home) / path_text[2:] if len(path_text) > 1 else Path(home)
     return path.expanduser().resolve()
 
 

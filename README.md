@@ -77,6 +77,16 @@ Open the printed local URL, then select the `.db` file you want to inspect. The
 viewer reads the `memories` table only and does not create, update, or repair
 ledger files.
 
+View the operational log database in a local read-only browser UI:
+
+```powershell
+python view_twinmind_logs.py
+```
+
+Open the printed local URL, then select `twinmind_logs.db` or the custom
+database path passed to `--log-database`. The viewer reads the `logs` table only
+and does not create, update, or repair log files.
+
 You can also run without activating the virtual environment by calling its Python
 directly.
 
@@ -180,6 +190,25 @@ Examples:
 ```powershell
 python view_twinmind_db.py
 python view_twinmind_db.py --port 8766
+```
+
+### `view_twinmind_logs.py`
+
+Use this script to select and view a TwinMind SQLite operational log database in
+a local read-only browser UI.
+
+Arguments:
+
+| Argument | Type | Default | How to use it |
+| --- | --- | --- | --- |
+| `--host HOST` | text | `127.0.0.1` | Choose the local interface to bind. |
+| `--port PORT` | integer | `8767` | Choose the local port. |
+
+Examples:
+
+```powershell
+python view_twinmind_logs.py
+python view_twinmind_logs.py --port 8768
 ```
 
 ## Python function reference
