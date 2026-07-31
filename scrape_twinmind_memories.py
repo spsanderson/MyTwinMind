@@ -203,12 +203,18 @@ def write_memory_markdown(
 
 def display_path(path: Path) -> str:
     """Return an absolute path for user-facing logs."""
-    return str(path.expanduser().resolve())
+    return str(_resolved_path(path))
+
+
+def _resolved_path(path: Path) -> Path:
+    """Normalize a local path consistently for display and file access."""
+    return path.expanduser().resolve()
 
 
 @contextmanager
 def open_memory_database(database_path: Path) -> Iterator[sqlite3.Connection]:
     """Open the download ledger and create its schema when necessary."""
+    database_path = _resolved_path(database_path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(database_path)
     connection.execute(
@@ -258,6 +264,7 @@ def record_download(
 @contextmanager
 def open_log_database(database_path: Path) -> Iterator[sqlite3.Connection]:
     """Open the operational log database and create its schema."""
+    database_path = _resolved_path(database_path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(database_path)
     connection.execute(
@@ -531,6 +538,16 @@ def is_memory_detail_url(url: str) -> bool:
     return url.startswith(APP_ORIGIN) and "/m/" in url
 
 
+def wait_for_memory_detail_url(page, timeout_ms: int = 10000) -> str:
+    """Wait briefly for a clicked memory to finish its SPA navigation."""
+    try:
+        page.wait_for_url(is_memory_detail_url, timeout=timeout_ms)
+    except Exception:
+        # The caller reports the final URL as a failed click after this bounded wait.
+        pass
+    return page.url
+
+
 def click_memory_item(item) -> None:
     for selector in (MEMORY_CLICK_TARGET_SELECTOR, "[role='button']", "div"):
         target = item.locator(selector).first
@@ -751,8 +768,7 @@ def scrape_visible_items(
         link = ""
         try:
             click_memory_item(item)
-            page.wait_for_timeout(1000)
-            link = page.url
+            link = wait_for_memory_detail_url(page)
             if not is_memory_detail_url(link):
                 message = f"Skipped memory {source_index} ({title!r}): click did not open a memory detail page ({link})"
                 if logger:

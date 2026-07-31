@@ -1,4 +1,5 @@
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -26,6 +27,7 @@ from scrape_twinmind_memories import (
     sanitize_filename,
     scrape_date_groups,
     scrape_visible_items,
+    wait_for_memory_detail_url,
     wait_for_memory_list_change,
     unique_markdown_path,
     was_successfully_downloaded,
@@ -138,6 +140,11 @@ class FakeMemoryPage:
     def wait_for_timeout(self, timeout):
         self.waited.append(timeout)
 
+    def wait_for_url(self, predicate, timeout):
+        self.waited.append(("url", timeout))
+        if not predicate(self.url):
+            raise RuntimeError("memory detail URL not reached")
+
     def go_back(self, wait_until="domcontentloaded", timeout=5000):
         self.back_count += 1
         self.url = "https://app.twinmind.com"
@@ -181,9 +188,37 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
     def test_display_path_returns_absolute_path(self):
         self.assertTrue(Path(display_path(Path("memories.db"))).is_absolute())
 
+    def test_database_paths_expand_user_before_opening(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                with open_memory_database(Path("~/state/memories.db")):
+                    pass
+                with open_log_database(Path("~/state/logs.db")):
+                    pass
+
+            self.assertTrue((home / "state" / "memories.db").is_file())
+            self.assertTrue((home / "state" / "logs.db").is_file())
+
     def test_is_memory_detail_url_requires_memory_route(self):
         self.assertTrue(is_memory_detail_url("https://app.twinmind.com/m/abc"))
         self.assertFalse(is_memory_detail_url("https://app.twinmind.com/"))
+
+    def test_wait_for_memory_detail_url_allows_delayed_spa_navigation(self):
+        page = Mock()
+        page.url = "https://app.twinmind.com/"
+
+        def finish_navigation(predicate, timeout):
+            self.assertEqual(timeout, 10000)
+            page.url = "https://app.twinmind.com/m/delayed"
+            self.assertTrue(predicate(page.url))
+
+        page.wait_for_url.side_effect = finish_navigation
+
+        self.assertEqual(
+            wait_for_memory_detail_url(page),
+            "https://app.twinmind.com/m/delayed",
+        )
 
     def test_render_markdown_contains_all_sections(self):
         record = MemoryRecord(
