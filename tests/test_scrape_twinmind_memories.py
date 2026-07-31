@@ -8,12 +8,14 @@ from unittest.mock import Mock, patch
 
 from scrape_twinmind_memories import (
     DEFAULT_LOG_DATABASE_PATH,
+    MEMORY_CLICK_TARGET_SELECTOR,
     MEMORY_DATE_BUTTON_SELECTOR,
     MEMORY_ITEM_SELECTOR,
     MEMORY_LIST_SELECTOR,
     MemoryRecord,
     ScraperLogger,
     build_manual_login_command,
+    click_memory_item,
     click_memory_target,
     display_path,
     is_memory_detail_url,
@@ -392,6 +394,27 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         click_memory_target(target)
 
         target.evaluate.assert_called_once_with("element => element.click()")
+
+    def test_click_memory_item_tries_fallback_selectors_until_a_visible_target_is_found(self):
+        first_target = Mock()
+        first_target.is_visible.return_value = False
+        second_target = Mock()
+        second_target.is_visible.return_value = True
+        item = Mock()
+
+        def locate(selector):
+            if selector == MEMORY_CLICK_TARGET_SELECTOR:
+                return Mock(first=first_target)
+            if selector == "button":
+                return Mock(first=second_target)
+            return Mock(first=Mock())
+
+        item.locator.side_effect = locate
+
+        with patch("scrape_twinmind_memories.click_memory_target") as click_target:
+            click_memory_item(item)
+
+        click_target.assert_called_once_with(second_target)
 
     def test_scrape_date_groups_clicks_each_date_and_delegates_scraping(self):
         buttons = [FakeButton("Today", selected=True), FakeButton("Yesterday")]

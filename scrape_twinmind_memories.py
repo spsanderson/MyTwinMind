@@ -37,6 +37,14 @@ MEMORIES_BUTTON_SELECTOR = "div.r-1otgn73:nth-child(2)"
 MEMORY_LIST_SELECTOR = "div.size-full > div:nth-child(1) > ul:nth-child(1)"
 MEMORY_ITEM_SELECTOR = f"{MEMORY_LIST_SELECTOR} > li.mb-4"
 MEMORY_CLICK_TARGET_SELECTOR = "div:nth-child(1) > div:nth-child(2) > div:nth-child(1)"
+MEMORY_CLICK_SELECTORS = (
+    MEMORY_CLICK_TARGET_SELECTOR,
+    "button",
+    "a",
+    "[role='button']",
+    "div[role='button']",
+    "div",
+)
 MEMORY_DATE_BUTTON_SELECTOR = (
     "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' size-full ')]"
     "/div[1]/ul[1]/preceding::ul[li/button][1]/li/button"
@@ -554,7 +562,7 @@ def wait_for_memory_detail_url(page, timeout_ms: int = 10000) -> str:
 
 
 def click_memory_item(item) -> None:
-    for selector in (MEMORY_CLICK_TARGET_SELECTOR, "[role='button']", "div"):
+    for selector in MEMORY_CLICK_SELECTORS:
         target = item.locator(selector).first
         try:
             if target.is_visible(timeout=500):
