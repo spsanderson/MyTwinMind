@@ -25,6 +25,7 @@ from scrape_twinmind_memories import (
     quote_command,
     record_log,
     record_download,
+    read_item_key,
     render_markdown,
     sanitize_filename,
     scrape_date_groups,
@@ -206,6 +207,26 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
     def test_is_memory_detail_url_requires_memory_route(self):
         self.assertTrue(is_memory_detail_url("https://app.twinmind.com/m/abc"))
         self.assertFalse(is_memory_detail_url("https://app.twinmind.com/"))
+
+    def test_read_item_key_prefers_link_over_duplicate_visible_text(self):
+        first = Mock()
+        first.locator.return_value.first.get_attribute.return_value = "/m/first"
+        first.inner_text.return_value = "Daily standup"
+        second = Mock()
+        second.locator.return_value.first.get_attribute.return_value = "/m/second"
+        second.inner_text.return_value = "Daily standup"
+
+        self.assertNotEqual(read_item_key(first, 1), read_item_key(second, 2))
+        first.inner_text.assert_not_called()
+        second.inner_text.assert_not_called()
+
+    def test_read_item_key_falls_back_to_visible_text_without_dom_identity(self):
+        item = Mock()
+        item.locator.return_value.first.get_attribute.return_value = None
+        item.get_attribute.return_value = None
+        item.inner_text.return_value = "  Daily\n standup  "
+
+        self.assertEqual(read_item_key(item, 1), "Daily standup")
 
     def test_wait_for_memory_detail_url_allows_delayed_spa_navigation(self):
         page = Mock()
