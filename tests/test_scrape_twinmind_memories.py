@@ -208,17 +208,37 @@ class ScrapeTwinMindMemoriesTests(unittest.TestCase):
         self.assertTrue(is_memory_detail_url("https://app.twinmind.com/m/abc"))
         self.assertFalse(is_memory_detail_url("https://app.twinmind.com/"))
 
-    def test_read_item_key_prefers_link_over_duplicate_visible_text(self):
+    def test_read_item_key_prefers_memory_link_over_duplicate_visible_text(self):
         first = Mock()
+        first.get_attribute.return_value = None
         first.locator.return_value.first.get_attribute.return_value = "/m/first"
         first.inner_text.return_value = "Daily standup"
         second = Mock()
+        second.get_attribute.return_value = None
         second.locator.return_value.first.get_attribute.return_value = "/m/second"
         second.inner_text.return_value = "Daily standup"
 
         self.assertNotEqual(read_item_key(first, 1), read_item_key(second, 2))
         first.inner_text.assert_not_called()
         second.inner_text.assert_not_called()
+
+    def test_read_item_key_prefers_row_id_over_ancillary_link(self):
+        item = Mock()
+        item.get_attribute.side_effect = lambda name, timeout=1000: (
+            "memory-123" if name == "data-memory-id" else None
+        )
+        item.locator.return_value.first.get_attribute.return_value = "/help"
+
+        self.assertEqual(read_item_key(item, 1), "data-memory-id:memory-123")
+        item.locator.assert_not_called()
+
+    def test_read_item_key_ignores_non_memory_link(self):
+        item = Mock()
+        item.get_attribute.return_value = None
+        item.locator.return_value.first.get_attribute.return_value = "#"
+        item.inner_text.return_value = "Daily standup"
+
+        self.assertEqual(read_item_key(item, 1), "Daily standup")
 
     def test_read_item_key_falls_back_to_visible_text_without_dom_identity(self):
         item = Mock()

@@ -541,19 +541,24 @@ def read_item_key(item, source_index: int) -> str:
     """Return the most stable available identity for a memory list item.
 
     TwinMind can render multiple memories with identical visible text.  Prefer
-    link and DOM identifiers so the scrolling crawler does not mistake those
-    distinct rows for the same memory; retain the text key as a markup-safe
-    fallback for rows that expose no identifier.
+    DOM identifiers and memory links so the scrolling crawler does not mistake
+    those distinct rows for the same memory; retain the text key as a
+    markup-safe fallback for rows that expose no identifier.
     """
     attribute_candidates = (
-        ("a[href]", "href"),
         (None, "data-memory-id"),
         (None, "data-id"),
+        ("a[href]", "href"),
     )
     for selector, attribute in attribute_candidates:
         try:
             target = item.locator(selector).first if selector else item
             value = target.get_attribute(attribute, timeout=1000)
+            if attribute == "href" and not (
+                value
+                and (value.startswith("/m/") or value.startswith(f"{APP_ORIGIN}/m/"))
+            ):
+                continue
             if value:
                 return f"{attribute}:{value}"
         except Exception:
